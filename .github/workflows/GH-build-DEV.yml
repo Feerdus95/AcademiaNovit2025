@@ -35,8 +35,8 @@ jobs:
         if: always()
         uses: dawidd6/action-send-mail@v3
         with:
-          server_address: debugmail.io
-          server_port: 25
+          server_address: app.debugmail.io
+          server_port: 9025
           secure: false
           username: ${{ secrets.DEBUGMAIL_USER }}
           password: ${{ secrets.DEBUGMAIL_PASSWORD }}
@@ -44,13 +44,12 @@ jobs:
           to: ${{ secrets.DEBUGMAIL_TO }}
           from: ${{ secrets.DEBUGMAIL_USER }}
           body: |
-            Workflow: ${{ github.workflow }}
-            Run ID: ${{ github.run_id }}
-            Run Number: ${{ github.run_number }}
-            Status: ${{ job.status }}
-            Commit: ${{ github.sha }}
-            Ref: ${{ github.ref }}
-            Author: ${{ github.actor }}
+            ✅ Build result: ${{ job.status }}
 
-            View the run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            View the commit: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
+            🛠 Workflow: ${{ github.workflow }}
+            🔁 Run Number: #${{ github.run_number }}
+            🔗 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            📦 Commit: ${{ github.sha }}
+            🧑‍💻 Author: ${{ github.actor }}
+            🌿 Branch: ${{ github.ref }}
