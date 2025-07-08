@@ -1,0 +1,59 @@
+name: .NET Build and Test (DEV)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  DEBUGMAIL_USER: ${{ secrets.DEBUGMAIL_USER }}
+  DEBUGMAIL_PASSWORD: ${{ secrets.DEBUGMAIL_PASSWORD }}
+  DEBUGMAIL_TO: ${{ secrets.DEBUGMAIL_TO }}
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run tests
+        run: dotnet test --no-build --verbosity normal --configuration Release
+
+      - name: Send email notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: debugmail.io
+          server_port: 25
+          secure: false
+          username: ${{ env.DEBUGMAIL_USER }}
+          password: ${{ env.DEBUGMAIL_PASSWORD }}
+          subject: "Build ${{ job.status }}: ${{ github.workflow }} #${{ github.run_number }}"
+          to: ${{ env.DEBUGMAIL_TO }}
+          from: ${{ env.DEBUGMAIL_USER }}
+          body: |
+            Workflow: ${{ github.workflow }}
+            Run ID: ${{ github.run_id }}
+            Run Number: ${{ github.run_number }}
+            Status: ${{ job.status }}
+            Commit: ${{ github.sha }}
+            Ref: ${{ github.ref }}
+            Author: ${{ github.actor }}
+
+            View the run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            View the commit: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
