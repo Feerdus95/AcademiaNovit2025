@@ -40,9 +40,9 @@ jobs:
           secure: false
           username: ${{ secrets.DEBUGMAIL_USER }}
           password: ${{ secrets.DEBUGMAIL_PASSWORD }}
-          subject: "Build ${{ job.status }}: ${{ github.workflow }} #${{ github.run_number }}"
+          from: ${{ secrets.DEBUGMAIL_FROM }}
           to: ${{ secrets.DEBUGMAIL_TO }}
-          from: ${{ secrets.DEBUGMAIL_USER }}
+          subject: "Build ${{ job.status }}: ${{ github.workflow }} #${{ github.run_number }}"
           body: |
             ✅ Build result: ${{ job.status }}
 
