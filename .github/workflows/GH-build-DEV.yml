@@ -8,9 +8,6 @@ on:
 
 env:
   DOTNET_VERSION: "9.0.x"
-  DEBUGMAIL_USER: ${{ secrets.DEBUGMAIL_USER }}
-  DEBUGMAIL_PASSWORD: ${{ secrets.DEBUGMAIL_PASSWORD }}
-  DEBUGMAIL_TO: ${{ secrets.DEBUGMAIL_TO }}
 
 jobs:
   build-and-test:
@@ -41,11 +38,11 @@ jobs:
           server_address: debugmail.io
           server_port: 25
           secure: false
-          username: ${{ env.DEBUGMAIL_USER }}
-          password: ${{ env.DEBUGMAIL_PASSWORD }}
+          username: ${{ secrets.DEBUGMAIL_USER }}
+          password: ${{ secrets.DEBUGMAIL_PASSWORD }}
           subject: "Build ${{ job.status }}: ${{ github.workflow }} #${{ github.run_number }}"
-          to: ${{ env.DEBUGMAIL_TO }}
-          from: ${{ env.DEBUGMAIL_USER }}
+          to: ${{ secrets.DEBUGMAIL_TO }}
+          from: ${{ secrets.DEBUGMAIL_USER }}
           body: |
             Workflow: ${{ github.workflow }}
             Run ID: ${{ github.run_id }}
