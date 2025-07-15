@@ -4,10 +4,7 @@ name: Build and Push to Docker Hub
 on:
   push:
     branches: ["develop"]
-    paths:
-      - "AcademiaNovit/**"
-      - "Dockerfile"
-      - ".github/workflows/GH-docker-registry-DEV.yml"
+
   workflow_dispatch:
     inputs:
       tag:
