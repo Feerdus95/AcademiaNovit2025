@@ -2,17 +2,17 @@ name: Build and Push to Docker Hub
 
 on:
   push:
-    branches: [ "develop" ]
+    branches: ["develop"]
     paths:
-      - 'AcademiaNovit/**'
-      - 'Dockerfile'
-      - '.github/workflows/GH-docker-registry-DEV.yml'
+      - "AcademiaNovit/**"
+      - "Dockerfile"
+      - ".github/workflows/GH-docker-registry-DEV.yml"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag (e.g., v1.0.0)'
+        description: "Image tag (e.g., v1.0.0)"
         required: true
-        default: 'latest'
+        default: "latest"
 
 env:
   REGISTRY: docker.io
@@ -23,7 +23,7 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
