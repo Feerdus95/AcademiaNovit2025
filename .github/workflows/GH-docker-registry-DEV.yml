@@ -18,6 +18,12 @@ env:
   TAG: ${{ github.sha }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test step
+        run: echo "Testing workflow"
+
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
