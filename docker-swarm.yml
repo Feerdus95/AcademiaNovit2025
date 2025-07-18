@@ -3,7 +3,7 @@ version: "3.8"
 services:
   # .NET Application Service
   web:
-    image: ghcr.io/${GITHUB_REPOSITORY}:${TAG:-latest}
+    image: feerdus95/academianovit:development
     deploy:
       replicas: 5
       update_config:
