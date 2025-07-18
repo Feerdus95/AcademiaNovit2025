@@ -57,11 +57,15 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          # Write the key properly, handling multi-line secret
-          cat > ~/.ssh/id_rsa << 'EOK'
-          ${{ secrets.SSH_PRIVATE_KEY }}
-          EOK
+          # Use printf to handle the key properly
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          # Test if the key file is valid
+          if [ ! -s ~/.ssh/id_rsa ]; then
+            echo "Error: SSH key is empty"
+            exit 1
+          fi
+          # Add host to known_hosts
           ssh-keyscan -p ${{ secrets.SSH_PORT }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
       - name: Copy docker files to server
