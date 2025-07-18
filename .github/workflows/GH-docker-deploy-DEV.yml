@@ -1,9 +1,6 @@
 name: Deploy DEV (Production Server)
 
 on:
-  push:
-    branches:
-      - development
   workflow_dispatch:
     inputs:
       image_tag:
@@ -35,13 +32,15 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Re-tag images in registry
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
           # Pull current image
-          docker pull $REGISTRY/$IMAGE_NAME:${{ github.event.inputs.image_tag }}
+          docker pull $REGISTRY/$IMAGE_NAME:$IMAGE_TAG
 
           # Re-tag with timestamp for backup
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          docker tag $REGISTRY/$IMAGE_NAME:${{ github.event.inputs.image_tag }} $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
+          docker tag $REGISTRY/$IMAGE_NAME:$IMAGE_TAG $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
 
           # Push backup image
           docker push $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
@@ -59,6 +58,8 @@ jobs:
           scp -P ${{ secrets.SSH_PORT }} docker-swarm.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/docker-swarm.yml
 
       - name: Deploy to Production
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
           ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
             # Login to Docker Hub
