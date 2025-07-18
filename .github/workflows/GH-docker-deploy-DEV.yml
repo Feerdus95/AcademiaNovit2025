@@ -10,11 +10,6 @@ on:
         description: "Docker image tag to deploy"
         required: true
         default: "development"
-        type: choice
-        options:
-          - development
-          - staging
-          - latest
 
 env:
   REGISTRY: docker.io
