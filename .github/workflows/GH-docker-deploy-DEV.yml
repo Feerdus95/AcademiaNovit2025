@@ -2,8 +2,8 @@ name: Deploy DEV (Production Server)
 
 on:
   push:
-    branches:
-      - development
+    branches: [development]
+
   workflow_dispatch:
     inputs:
       image_tag:
@@ -14,6 +14,7 @@ on:
 env:
   REGISTRY: docker.io
   IMAGE_NAME: feerdus95/academianovit
+  DEFAULT_TAG: development
 
 jobs:
   deploy:
@@ -23,6 +24,15 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Set image tag
+        id: set_tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -30,18 +40,19 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Re-tag images in registry
-        env:
-          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
+          # Use the tag from previous step
+          TAG="${{ steps.set_tag.outputs.tag }}"
+
           # Pull current image
-          docker pull $REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
 
           # Re-tag with timestamp for backup
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          docker tag $REGISTRY/$IMAGE_NAME:$IMAGE_TAG $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
 
           # Push backup image
-          docker push $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
 
       - name: Setup SSH
         run: |
@@ -56,15 +67,16 @@ jobs:
           scp -P ${{ secrets.SSH_PORT }} docker-swarm.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/docker-swarm.yml
 
       - name: Deploy to Production
-        env:
-          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
           ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            # Use the tag
+            DEPLOY_TAG="${{ steps.set_tag.outputs.tag }}"
+            
             # Login to Docker Hub
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
             
             # Pull the new image
-            docker pull feerdus95/academianovit:${{ github.event.inputs.image_tag }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$DEPLOY_TAG
             
             # Stop existing containers
             docker-compose down || true
@@ -77,13 +89,9 @@ jobs:
             docker ps
             
             # Deploy with Docker Swarm (5 replicas)
-            IMAGE_TAG=${{ github.event.inputs.image_tag }} docker stack deploy -c docker-swarm.yml academia-novit
-            
-            # Wait for services to start
-            sleep 10
+            IMAGE_TAG=$DEPLOY_TAG docker stack deploy -c docker-swarm.yml academia-novit
             
             # Show swarm services
             echo "=== Docker Swarm services ==="
             docker service ls
-            docker service ps academia-novit_web
           EOF
