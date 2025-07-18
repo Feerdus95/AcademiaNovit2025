@@ -3,10 +3,24 @@ name: Deploy DEV (Production Server)
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Image tag to deploy (e.g., latest, development)"
+      branch:
+        description: "Branch to deploy"
         required: true
         default: "development"
+        type: choice
+        options:
+          - development
+          - staging
+          - main
+      image_tag:
+        description: "Docker image tag to deploy"
+        required: true
+        default: "development"
+        type: choice
+        options:
+          - development
+          - staging
+          - latest
 
 env:
   REGISTRY: docker.io
@@ -19,34 +33,45 @@ env:
 jobs:
   retag-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ github.event.inputs.tag }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
 
-      # NEW: Re-tag current images in registry
+      - name: Display deployment info
+        run: |
+          echo "Deploying from branch: ${{ github.event.inputs.branch }}"
+          echo "Using image tag: ${{ github.event.inputs.image_tag }}"
+
+      # Login to Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Re-tag current images in registry
       - name: Re-tag current images
         run: |
           # Pull current image
-          docker pull $REGISTRY/$IMAGE_NAME:$TAG
+          docker pull $REGISTRY/$IMAGE_NAME:${{ github.event.inputs.image_tag }}
 
           # Re-tag with timestamp to keep history
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          docker tag $REGISTRY/$IMAGE_NAME:$TAG $REGISTRY/$IMAGE_NAME:$TAG-$TIMESTAMP
-          docker tag $REGISTRY/$IMAGE_NAME:$TAG $REGISTRY/$IMAGE_NAME:latest
+          docker tag $REGISTRY/$IMAGE_NAME:${{ github.event.inputs.image_tag }} $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
 
-          # Push re-tagged images
-          docker push $REGISTRY/$IMAGE_NAME:$TAG-$TIMESTAMP
-          docker push $REGISTRY/$IMAGE_NAME:latest
+          # If deploying from main, also tag as latest
+          if [ "${{ github.event.inputs.branch }}" == "main" ]; then
+            docker tag $REGISTRY/$IMAGE_NAME:${{ github.event.inputs.image_tag }} $REGISTRY/$IMAGE_NAME:latest
+            docker push $REGISTRY/$IMAGE_NAME:latest
+          fi
 
+          # Push backup image
+          docker push $REGISTRY/$IMAGE_NAME:backup-$TIMESTAMP
+
+      # Setup SSH
       - name: Setup SSH access
         run: |
           mkdir -p ~/.ssh
@@ -54,33 +79,46 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      # MODIFIED: Copy both docker-compose files
+      # Copy Docker files
       - name: Copy Docker files to server
         run: |
           scp -P "$SSH_PORT" docker-compose.yml "$SSH_USER@$SSH_HOST:/home/$SSH_USER/docker-compose.yml"
           scp -P "$SSH_PORT" docker-swarm.yml "$SSH_USER@$SSH_HOST:/home/$SSH_USER/docker-swarm.yml"
 
-      # MODIFIED: Deploy with docker-compose first, then Swarm
-      - name: Deploy to Production
+      # Deploy to production
+      - name: Deploy to Production Server
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
-          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << EOF
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << 'EOF'
+            # Set the image tag
+            export DEPLOY_TAG="${IMAGE_TAG}"
+            
             # Login to Docker Hub
             docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
             
-            # Pull new images from registry
-            docker pull $REGISTRY/$IMAGE_NAME:latest
+            # Pull new image from registry
+            docker pull $REGISTRY/$IMAGE_NAME:${DEPLOY_TAG}
             
-            # Deploy with docker-compose (requirement fulfillment)
+            # Update docker-compose with the correct tag
+            export IMAGE_TAG=${DEPLOY_TAG}
+            
+            # Deploy with docker-compose
             docker-compose down || true
             docker-compose up -d
             
             # Verify containers are running
+            echo "=== Docker containers status ==="
             docker ps
             
-            # Deploy with Docker Swarm (5 replicas as per requirement)
+            # Deploy with Docker Swarm (5 replicas)
             docker stack deploy -c docker-swarm.yml academia-novit
             
+            # Wait a moment for services to start
+            sleep 10
+            
             # Verify Swarm services
+            echo "=== Docker Swarm services ==="
             docker service ls
             docker service ps academia-novit_web
           EOF
