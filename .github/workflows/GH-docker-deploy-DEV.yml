@@ -1,6 +1,9 @@
 name: Deploy DEV (Production Server)
 
 on:
+  push:
+    branches:
+      - development
   workflow_dispatch:
     inputs:
       image_tag:
