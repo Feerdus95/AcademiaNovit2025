@@ -40,7 +40,8 @@ jobs:
       - name: Install SSH key
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ env.SSH_KEY }}
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Deploy to production
         env:
