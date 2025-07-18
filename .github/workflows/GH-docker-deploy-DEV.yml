@@ -17,7 +17,7 @@ env:
   SSH_PORT: ${{ secrets.SSH_PORT }}
 
 jobs:
-  deploy:
+  retag-and-deploy:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.inputs.tag }}
@@ -26,6 +26,27 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # NEW: Re-tag current images in registry
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Re-tag current images
+        run: |
+          # Pull current image
+          docker pull $REGISTRY/$IMAGE_NAME:$TAG
+
+          # Re-tag with timestamp to keep history
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          docker tag $REGISTRY/$IMAGE_NAME:$TAG $REGISTRY/$IMAGE_NAME:$TAG-$TIMESTAMP
+          docker tag $REGISTRY/$IMAGE_NAME:$TAG $REGISTRY/$IMAGE_NAME:latest
+
+          # Push re-tagged images
+          docker push $REGISTRY/$IMAGE_NAME:$TAG-$TIMESTAMP
+          docker push $REGISTRY/$IMAGE_NAME:latest
+
       - name: Setup SSH access
         run: |
           mkdir -p ~/.ssh
@@ -33,14 +54,33 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: Copy docker-swarm.yml to server
+      # MODIFIED: Copy both docker-compose files
+      - name: Copy Docker files to server
         run: |
+          scp -P "$SSH_PORT" docker-compose.yml "$SSH_USER@$SSH_HOST:/home/$SSH_USER/docker-compose.yml"
           scp -P "$SSH_PORT" docker-swarm.yml "$SSH_USER@$SSH_HOST:/home/$SSH_USER/docker-swarm.yml"
 
-      - name: Deploy to Docker Swarm (production)
+      # MODIFIED: Deploy with docker-compose first, then Swarm
+      - name: Deploy to Production
         run: |
           ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << EOF
+            # Login to Docker Hub
             docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-            docker pull $REGISTRY/$IMAGE_NAME:$TAG
+            
+            # Pull new images from registry
+            docker pull $REGISTRY/$IMAGE_NAME:latest
+            
+            # Deploy with docker-compose (requirement fulfillment)
+            docker-compose down || true
+            docker-compose up -d
+            
+            # Verify containers are running
+            docker ps
+            
+            # Deploy with Docker Swarm (5 replicas as per requirement)
             docker stack deploy -c docker-swarm.yml academia-novit
+            
+            # Verify Swarm services
+            docker service ls
+            docker service ps academia-novit_web
           EOF
