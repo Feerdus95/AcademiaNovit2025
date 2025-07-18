@@ -14,7 +14,7 @@ on:
 env:
   REGISTRY: docker.io
   IMAGE_NAME: feerdus95/academianovit
-  SSH_KEY: ${{ secrets.SSH_KEY }}
+  SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
   SSH_USER: ${{ secrets.SSH_USER }}
   SSH_HOST: ${{ secrets.SSH_HOST }}
   SSH_PORT: ${{ secrets.SSH_PORT }}
