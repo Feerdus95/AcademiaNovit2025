@@ -3,7 +3,7 @@ version: "3.8"
 services:
   # .NET Application Service
   web:
-    image: feerdus95/academianovit:development
+    image: feerdus95/academianovit:${IMAGE_TAG:-development}
     deploy:
       replicas: 5
       update_config:
