@@ -57,7 +57,10 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          # Write the key properly, handling multi-line secret
+          cat > ~/.ssh/id_rsa << 'EOK'
+          ${{ secrets.SSH_PRIVATE_KEY }}
+          EOK
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p ${{ secrets.SSH_PORT }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
