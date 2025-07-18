@@ -1,87 +1,46 @@
-name: Deploy to Production
+name: Deploy DEV (Production Server)
 
 on:
-  push:
-    branches: [development]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag to deploy (default: latest)"
-        required: false
-        default: "latest"
+        description: "Image tag to deploy (e.g., latest, development)"
+        required: true
+        default: "development"
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/academianovit
-  TAG: ${{ github.event.inputs.tag || 'latest' }}
-  SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+  IMAGE_NAME: feerdus95/academianovit
+  SSH_KEY: ${{ secrets.SSH_KEY }}
   SSH_USER: ${{ secrets.SSH_USER }}
   SSH_HOST: ${{ secrets.SSH_HOST }}
   SSH_PORT: ${{ secrets.SSH_PORT }}
+  TAG: ${{ github.event.inputs.tag }}
 
 jobs:
   deploy:
-    name: Deploy
+    name: Deploy to Production (DEV Workflow)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up SSH
+      - name: Setup SSH access
         run: |
-          # Create .ssh directory
           mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          
-          # Save private key with proper newlines
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | sed 's/\\n/\n/g' > ~/.ssh/id_rsa
-          
-          # Set correct permissions
+          echo "$SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          
-          # Add host to known_hosts
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-          
-          # Test SSH connection
-          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'echo "SSH connection successful"'
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy to production
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          TAG: ${{ env.TAG }}
-          DB_USER: ${{ env.DB_USER }}
-          DB_PASSWORD: ${{ env.DB_PASSWORD }}
+      - name: Copy docker-swarm.yml to server
         run: |
-          # Create necessary directories
-          ssh -o StrictHostKeyChecking=no -p $SSH_PORT $SSH_USER@$SSH_HOST \
-            "mkdir -p ~/academianovit/config ~/academianovit/data"
+          scp -P "$SSH_PORT" docker-swarm.yml "$SSH_USER@$SSH_HOST:/home/$SSH_USER/docker-swarm.yml"
 
-          # Copy docker-swarm.yml to server
-          scp -P $SSH_PORT docker-swarm.yml $SSH_USER@$SSH_HOST:~/academianovit/
-
-          # Login to Docker Hub on the server
-          ssh -o StrictHostKeyChecking=no -p $SSH_PORT $SSH_USER@$SSH_HOST \
-            "echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin"
-
-          # Deploy stack
-          ssh -o StrictHostKeyChecking=no -p $SSH_PORT $SSH_USER@$SSH_HOST \
-            "cd ~/academianovit && \
-             docker stack deploy -c docker-swarm.yml academianovit --with-registry-auth && \
-             docker service update --force academianovit_web \
-               --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} \
-               --with-registry-auth"
-
-          # Verify deployment
-          ssh -o StrictHostKeyChecking=no -p $SSH_PORT $SSH_USER@$SSH_HOST \
-            "docker service ls | grep academianovit && \
-             docker service ps academianovit_web --no-trunc"
+      - name: Deploy to Docker Swarm (production)
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << EOF
+            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+            docker pull $REGISTRY/$IMAGE_NAME:$TAG
+            docker stack deploy -c docker-swarm.yml academia-novit
+          EOF
