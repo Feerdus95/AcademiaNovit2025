@@ -1,9 +1,6 @@
 name: Deploy DEV (Production Server)
 
 on:
-  push:
-    branches:
-      - development
   workflow_dispatch:
     inputs:
       tag:
@@ -11,17 +8,18 @@ on:
         required: true
         default: "development"
 
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: feerdus95/academianovit
+  SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+  SSH_USER: ${{ secrets.SSH_USER }}
+  SSH_HOST: ${{ secrets.SSH_HOST }}
+  SSH_PORT: ${{ secrets.SSH_PORT }}
+
 jobs:
   deploy:
-    name: Deploy to Production (DEV Workflow)
     runs-on: ubuntu-latest
     env:
-      REGISTRY: docker.io
-      IMAGE_NAME: feerdus95/academianovit
-      SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_PORT: ${{ secrets.SSH_PORT }}
       TAG: ${{ github.event.inputs.tag }}
 
     steps:
