@@ -96,6 +96,39 @@ jobs:
           echo "   - New Tag: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
           echo "   - Latest: ${{ env.IMAGE_NAME }}:latest"
 
+      - name: Verify SSH connection
+        run: |
+          echo "🔍 Verifying SSH connection to host..."
+          echo "Host: ${{ secrets.SSH_HOST }}"
+          echo "Port: ${{ secrets.SSH_PORT }}"
+          echo "User: ${{ secrets.SSH_USER }}"
+          
+          # Test basic connectivity
+          if ! nc -zv "${{ secrets.SSH_HOST }}" "${{ secrets.SSH_PORT }}" 2>&1; then
+            echo "❌ Cannot reach host ${{ secrets.SSH_HOST }} on port ${{ secrets.SSH_PORT }}"
+            exit 1
+          fi
+          
+          # Test SSH connection
+          if ! ssh -v -o StrictHostKeyChecking=no -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" exit; then
+            echo "❌ SSH connection failed to ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+            exit 1
+          fi
+          
+          echo "✅ SSH connection verified"
+
+      - name: Create remote directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "📂 Creating remote directory if it doesn't exist..."
+            mkdir -p ~/academianovit
+            echo "✅ Directory ready"
+
       - name: Copy docker-compose to server
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -106,6 +139,8 @@ jobs:
           source: "docker-compose.yml"
           target: "~/academianovit/"
           overwrite: true
+          strip_components: 0
+          debug: true
 
       - name: Deploy to production server via SSH
         uses: appleboy/ssh-action@v1.0.3
