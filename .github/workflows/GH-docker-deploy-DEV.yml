@@ -217,20 +217,29 @@ jobs:
             echo "🧹 Cleaning up unused Docker resources..."
             docker system prune -af --volumes --filter "label!=keep" || true
 
+            # Create a modified docker-compose file with updated ports
+            echo "🔄 Creating modified docker-compose.yml with updated ports..."
+            sed 's/"5432:5432"/"5433:5432"/' docker-compose.yml > docker-compose.deploy.yml
+            
+            # Update the connection string in the web service
+            sed -i 's/Host=db;Port=5432/Host=db;Port=5432/' docker-compose.deploy.yml
+            
+            echo "✅ Created docker-compose.deploy.yml with port 5433 for PostgreSQL"
+
             # Pull the newly tagged image
             echo "📥 Pulling new image from Docker Hub..."
             docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
 
-            # Start services
+            # Start services using the modified compose file
             echo "🚀 Starting services with docker-compose..."
-            docker-compose up -d --remove-orphans
+            docker-compose -f docker-compose.deploy.yml up -d --remove-orphans
 
             # Verify deployment
             echo "⏳ Waiting for services to start..."
             sleep 30
 
             echo "📊 Service Status:"
-            docker-compose ps
+            docker-compose -f docker-compose.deploy.yml ps
 
             # Health check
             echo "🔍 Running health checks..."
@@ -239,7 +248,7 @@ jobs:
             else
               echo "❌ Web service not responding on port 80"
               echo "📋 Container logs:"
-              docker-compose logs --tail=50
+              docker-compose -f docker-compose.deploy.yml logs --tail=50
               exit 1
             fi
 
