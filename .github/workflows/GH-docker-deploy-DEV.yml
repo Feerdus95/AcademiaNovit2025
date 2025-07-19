@@ -1,20 +1,24 @@
-name: Deploy DEV (Production Server)
+name: Deploy to DEV with Docker Swarm
 
 on:
   push:
     branches: [development]
-
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Docker image tag to deploy"
+        description: 'Docker image tag to deploy'
         required: true
-        default: "development"
+        default: 'development'
+
+# Environment variables
+defaults:
+  run:
+    shell: bash
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: feerdus95/academianovit
+  IMAGE_NAME: academianovit
   DEFAULT_TAG: development
+  SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
 
 jobs:
   deploy:
@@ -33,111 +37,146 @@ jobs:
             echo "tag=${{ env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          install: true
 
-      - name: Re-tag images in registry
-        run: |
-          TAG="${{ steps.set_tag.outputs.tag }}"
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Setup SSH with DNS fix
+      - name: Setup SSH connection
         run: |
+          set -e
+          echo "🚀 Setting up SSH connection..."
+          
+          # Create .ssh directory and set permissions
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Write SSH key
+          # Save private key
+          echo "🔑 Saving SSH private key..."
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          # Add host to /etc/hosts to fix DNS
-          echo "Adding host to /etc/hosts..."
-          echo "54.172.225.3 ${{ secrets.SSH_HOST }}" | sudo tee -a /etc/hosts
+          # Add server to known_hosts
+          echo "📝 Adding server to known_hosts..."
+          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-          # Verify it was added
-          cat /etc/hosts | grep "${{ secrets.SSH_HOST }}"
-
-          # Test DNS resolution
-          ping -c 1 ${{ secrets.SSH_HOST }} || true
-
-          # SSH config
-          cat > ~/.ssh/config << 'EOF'
-          Host deploy-server
-            HostName ${{ secrets.SSH_HOST }}
-            Port ${{ secrets.SSH_PORT }}
-            User ${{ secrets.SSH_USER }}
-            StrictHostKeyChecking no
-            UserKnownHostsFile=/dev/null
-            ConnectTimeout=60
-            ServerAliveInterval=30
-            ServerAliveCountMax=3
-            LogLevel ERROR
-          EOF
-          chmod 600 ~/.ssh/config
-
-      - name: Test connection with retry
-        run: |
-          echo "Waiting for DNS to propagate..."
-          sleep 5
-
-          echo "Testing connection..."
-          for i in {1..3}; do
-            if ssh deploy-server "echo 'Connection successful'"; then
-              echo "Connected on attempt $i"
+          # Test connection with retry logic
+          MAX_RETRIES=3
+          RETRY_DELAY=10
+          
+          for ((i=1; i<=$MAX_RETRIES; i++)); do
+            echo "🔌 Testing SSH connection on port ${{ secrets.SSH_PORT }} (Attempt $i/$MAX_RETRIES)..."
+            if ssh $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo '✅ SSH connection successful on port ${{ secrets.SSH_PORT }}'"; then
+              echo "✅ Successfully connected to ${{ secrets.SSH_HOST }}"
               break
             else
-              echo "Failed attempt $i, retrying in 10s..."
-              sleep 10
+              if [ $i -eq $MAX_RETRIES ]; then
+                echo "❌ Failed to connect after $MAX_RETRIES attempts"
+                exit 1
+              fi
+              echo "⏳ Connection failed, retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
             fi
           done
 
-      - name: Copy files
+      - name: Copy files to server
         run: |
-          scp docker-compose.yml deploy-server:~/
-          scp docker-swarm.yml deploy-server:~/
+          set -e
+          echo "📦 Preparing files for deployment..."
+          
+          # Save Docker image to tar file
+          IMAGE_TAR="${{ env.IMAGE_NAME }}.tar"
+          echo "💾 Saving Docker image to $IMAGE_TAR..."
+          docker save -o $IMAGE_TAR ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
+          
+          # Copy files to server
+          echo "📤 Transferring files to server on port ${{ secrets.SSH_PORT }}..."
+          scp $SSH_OPTS -P ${{ secrets.SSH_PORT }} \
+            $IMAGE_TAR \
+            docker-compose.yml \
+            docker-swarm.yml \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/ || {
+              echo "❌ Failed to copy files to server"
+              exit 1
+            }
+          
+          echo "✅ Files successfully transferred to server"
 
-      - name: Deploy to Production
+      - name: Deploy with Docker Swarm
         env:
           DEPLOY_TAG: ${{ steps.set_tag.outputs.tag }}
-          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
-          ssh deploy-server << 'ENDSSH'
+          echo "🚀 Starting deployment process on port ${{ secrets.SSH_PORT }}..."
+          
+          ssh $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
             set -e
             
-            echo "=== Starting deployment ==="
-            echo "Tag: $DEPLOY_TAG"
+            echo "🔍 Deployment details:"
+            echo "  - Image: $IMAGE_NAME"
+            echo "  - Tag: $DEPLOY_TAG"
+            echo "  - Timestamp: $(date)"
             
-            # Login to Docker Hub
-            echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USER" --password-stdin
+            # Load the Docker image
+            echo "\n📥 Loading Docker image..."
+            docker load -i ~/$IMAGE_NAME.tar || {
+              echo "❌ Failed to load Docker image"
+              exit 1
+            }
             
-            # Pull image
-            docker pull $REGISTRY/$IMAGE_NAME:$DEPLOY_TAG
+            # Set environment variable for docker-compose and docker-swarm
+            export IMAGE_TAG=$DEPLOY_TAG
             
-            # Deploy with docker-compose
+            # Deploy with docker-compose (for single node testing)
+            echo "\n🐳 Deploying with docker-compose..."
             docker-compose down 2>/dev/null || true
             docker-compose up -d
             
-            # Show containers
-            docker ps
+            # Show running containers
+            echo "\n📦 Running containers:"
+            docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"
             
-            # Deploy with Swarm
-            export IMAGE_TAG=$DEPLOY_TAG
+            # Initialize Docker Swarm if not already initialized
+            if ! docker node ls &>/dev/null; then
+              echo "\n🐝 Initializing Docker Swarm..."
+              docker swarm init --advertise-addr 127.0.0.1 || \
+                echo "⚠️  Swarm already initialized or error occurred"
+            fi
+            
+            # Deploy with Docker Swarm (5 replicas)
+            echo "\n🚀 Deploying with Docker Swarm (5 replicas)..."
             docker stack deploy -c docker-swarm.yml academia-novit
             
-            # Wait
+            # Wait for services to start
+            echo "\n⏳ Waiting for services to stabilize..."
             sleep 15
             
-            # Show services
+            # Show services and their status
+            echo "\n📊 Docker services status:"
             docker service ls
             
-            echo "=== Deployment completed ==="
+            # Show service details
+            echo "\n🔍 Service details:"
+            docker service ps academia-novit_web --no-trunc || true
+            
+            # Show network information
+            echo "\n🌐 Network information:"
+            docker network ls
+            
+            # Show service logs
+            echo "\n📝 Service logs (last 10 lines):"
+            docker service logs --tail 10 academia-novit_web 2>&1 || true
+            
+            # Verify service health
+            echo "\n✅ Deployment completed successfully!"
+            echo "🔄 Services are being deployed with 5 replicas"
+            echo "🔗 API should be available shortly at: http://localhost:80"
           ENDSSH
