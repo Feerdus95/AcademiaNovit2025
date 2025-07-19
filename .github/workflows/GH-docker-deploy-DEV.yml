@@ -52,37 +52,63 @@ jobs:
 
       - name: Setup SSH connection
         run: |
-          set -e
-          echo "🚀 Setting up SSH connection..."
+          set -ex  # Enable debug mode and exit on error
           
-          # Create .ssh directory and set permissions
+          echo "🚀 Setting up SSH connection..."
+          echo "🔍 Debug Info:"
+          echo "- SSH_HOST: ${{ secrets.SSH_HOST }}"
+          echo "- SSH_PORT: ${{ secrets.SSH_PORT }}"
+          echo "- SSH_USER: ${{ secrets.SSH_USER }}"
+          
+          # Create .ssh directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-
+          
           # Save private key
           echo "🔑 Saving SSH private key..."
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-
+          
+          # Verify private key was saved
+          if [ ! -f ~/.ssh/id_rsa ]; then
+            echo "❌ Error: Failed to save private key"
+            exit 1
+          fi
+          
           # Add server to known_hosts
           echo "📝 Adding server to known_hosts..."
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-
-          # Test connection with retry logic
+          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} 2>/dev/null | tee -a ~/.ssh/known_hosts
+          
+          # Retry logic
           MAX_RETRIES=3
           RETRY_DELAY=10
           
           for ((i=1; i<=$MAX_RETRIES; i++)); do
-            echo "🔌 Testing SSH connection on port ${{ secrets.SSH_PORT }} (Attempt $i/$MAX_RETRIES)..."
-            if ssh $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo '✅ SSH connection successful on port ${{ secrets.SSH_PORT }}'"; then
-              echo "✅ Successfully connected to ${{ secrets.SSH_HOST }}"
-              break
+            echo "\n🔌 Attempt $i/$MAX_RETRIES - Testing SSH connection to ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+            
+            # SSH command with verbose debug output
+            if ssh -v -v -v $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo '✅ SSH connection successful!'"; then
+              echo "✅ Successfully connected to ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+              exit 0  # Exit with success
             else
+              SSH_EXIT_CODE=$?
+              echo "⚠️  SSH connection failed with code: $SSH_EXIT_CODE"
+              
               if [ $i -eq $MAX_RETRIES ]; then
                 echo "❌ Failed to connect after $MAX_RETRIES attempts"
+                
+                # Additional debug information
+                echo "\n🔍 Debug information:"
+                echo "- Current directory: $(pwd)"
+                echo "- SSH directory contents:"
+                ls -la ~/.ssh/
+                echo "- Known hosts file:"
+                cat ~/.ssh/known_hosts || true
+                
                 exit 1
               fi
-              echo "⏳ Connection failed, retrying in ${RETRY_DELAY}s..."
+              
+              echo "⏳ Retrying in ${RETRY_DELAY}s... ($((MAX_RETRIES-i)) attempts remaining)"
               sleep $RETRY_DELAY
             fi
           done
