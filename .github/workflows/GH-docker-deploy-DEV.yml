@@ -75,54 +75,33 @@ jobs:
             exit 1
           fi
           
-          # Enhanced network diagnostics
-          echo "🔍 Running comprehensive network diagnostics..."
+          # Network diagnostics summary
+          echo "🔍 Network diagnostics:"
           echo "🔹 Local hostname: $(hostname)"
           echo "🔹 Local IP addresses: $(hostname -I 2>/dev/null || ip addr 2>/dev/null || echo 'Not available')"
-          echo "🔹 Target host: ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+          echo "🔹 Target host: ${{ secrets.SSH_HOST }}:22 (using standard SSH port)"
           
-          # Test basic ICMP connectivity
-          echo "\n🔍 Testing basic ICMP connectivity to ${{ secrets.SSH_HOST }}..."
-          if ping -c 3 -W 2 ${{ secrets.SSH_HOST }} 2>&1; then
-            echo "✅ ICMP ping successful"
+          # Verify SSH connectivity on port 22
+          echo "\n🔍 Verifying SSH access on port 22..."
+          if timeout 5 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/22" 2>/dev/null; then
+            echo "✅ Port 22 is open and accessible"
           else
-            echo "⚠️  ICMP ping failed - host might be blocking ICMP or is unreachable"
+            echo "❌ Port 22 is not accessible. Please check:"
+            echo "1. The SSH server is running on the target host"
+            echo "2. The firewall allows incoming connections on port 22"
+            echo "3. The server is reachable from GitHub Actions runners"
+            exit 1
           fi
           
-          # Test common SSH ports if the configured one fails
-          echo "\n🔍 Testing common SSH ports (this may take a moment)..."
-          for port in ${{ secrets.SSH_PORT }} 22 2222 2022 222; do
-            echo -n "🔹 Testing port $port: "
-            if timeout 3 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/$port" 2>/dev/null; then
-              echo "✅ OPEN - SSH might be running here!"
-              echo "   Try using this port instead of the current one."
-            else
-              echo "❌ CLOSED or filtered"
-            fi
-          done
+          # Update SSH port to use standard port 22
+          SSH_PORT=22
           
-          # Check if any port is open
-          echo "\n🔍 Quick port scan (top 20 common ports)..."
-          for port in 21 22 23 25 53 80 110 111 135 139 143 443 445 993 995 1723 3306 3389 5900 8080; do
-            if timeout 1 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/$port" 2>/dev/null; then
-              echo "🔸 Port $port: OPEN - Service might be running"
-            fi
-          done
-          
-          # Try different ssh-keyscan formats
-          echo "🔍 Trying different ssh-keyscan formats..."
+          # Add server to known_hosts
+          echo "🔍 Adding SSH host key to known_hosts..."
+          ssh-keyscan -p 22 ${{ secrets.SSH_HOST }} 2>> ssh-keyscan-errors.log | tee -a ~/.ssh/known_hosts
           
           MAX_RETRIES=3
           RETRY_DELAY=5
-          
-          for ((i=1; i<=$MAX_RETRIES; i++)); do
-            echo "\n🔍 Attempt $i/$MAX_RETRIES - Testing SSH connection..."
-            
-            # Try different ssh-keyscan formats
-            for format in "" "-t rsa" "-t ecdsa" "-t ed25519"; do
-              echo "  🔹 Trying ssh-keyscan $format..."
-              ssh-keyscan $format -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} 2>> ssh-keyscan-errors.log | tee -a ~/.ssh/known_hosts
-            done
             
             # Check if any keys were added
             if grep -q "${{ secrets.SSH_HOST }}" ~/.ssh/known_hosts 2>/dev/null; then
