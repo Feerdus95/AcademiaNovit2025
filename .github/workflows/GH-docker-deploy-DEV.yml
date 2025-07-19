@@ -42,21 +42,13 @@ jobs:
       - name: Re-tag images in registry
         run: |
           TAG="${{ steps.set_tag.outputs.tag }}"
-          echo "Working with tag: $TAG"
-
-          # Pull image
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
-
-          # Create backup tag
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
-
-          # Push backup
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
 
-      - name: Setup SSH
+      - name: Setup SSH with DNS fix
         run: |
-          # Create SSH directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
@@ -64,7 +56,17 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          # SSH config to avoid issues
+          # Add host to /etc/hosts to fix DNS
+          echo "Adding host to /etc/hosts..."
+          echo "54.172.225.3 ${{ secrets.SSH_HOST }}" | sudo tee -a /etc/hosts
+
+          # Verify it was added
+          cat /etc/hosts | grep "${{ secrets.SSH_HOST }}"
+
+          # Test DNS resolution
+          ping -c 1 ${{ secrets.SSH_HOST }} || true
+
+          # SSH config
           cat > ~/.ssh/config << 'EOF'
           Host deploy-server
             HostName ${{ secrets.SSH_HOST }}
@@ -79,15 +81,25 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      - name: Test connection and copy files
+      - name: Test connection with retry
         run: |
-          echo "Testing SSH connection..."
-          ssh deploy-server "echo 'Connection OK'"
+          echo "Waiting for DNS to propagate..."
+          sleep 5
 
-          echo "Copying docker-compose.yml..."
+          echo "Testing connection..."
+          for i in {1..3}; do
+            if ssh deploy-server "echo 'Connection successful'"; then
+              echo "Connected on attempt $i"
+              break
+            else
+              echo "Failed attempt $i, retrying in 10s..."
+              sleep 10
+            fi
+          done
+
+      - name: Copy files
+        run: |
           scp docker-compose.yml deploy-server:~/
-
-          echo "Copying docker-swarm.yml..."
           scp docker-swarm.yml deploy-server:~/
 
       - name: Deploy to Production
@@ -102,41 +114,30 @@ jobs:
             set -e
             
             echo "=== Starting deployment ==="
-            echo "Tag to deploy: $DEPLOY_TAG"
+            echo "Tag: $DEPLOY_TAG"
             
             # Login to Docker Hub
-            echo "Logging into Docker Hub..."
             echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USER" --password-stdin
             
-            # Pull the image
-            echo "Pulling image: $REGISTRY/$IMAGE_NAME:$DEPLOY_TAG"
+            # Pull image
             docker pull $REGISTRY/$IMAGE_NAME:$DEPLOY_TAG
             
-            # Stop existing containers
-            echo "Stopping existing containers..."
+            # Deploy with docker-compose
             docker-compose down 2>/dev/null || true
-            
-            # Start with docker-compose
-            echo "Starting with docker-compose..."
             docker-compose up -d
             
-            # Show running containers
-            echo "=== Running containers ==="
+            # Show containers
             docker ps
             
             # Deploy with Swarm
-            echo "Deploying to Docker Swarm..."
             export IMAGE_TAG=$DEPLOY_TAG
             docker stack deploy -c docker-swarm.yml academia-novit
             
-            # Wait for services
-            echo "Waiting for services to start..."
+            # Wait
             sleep 15
             
-            # Show Swarm services
-            echo "=== Swarm services ==="
+            # Show services
             docker service ls
-            docker stack ps academia-novit --no-trunc
             
-            echo "=== Deployment completed successfully ==="
+            echo "=== Deployment completed ==="
           ENDSSH
