@@ -42,9 +42,25 @@ jobs:
 
       - name: Re-tag and push Docker image
         run: |
+          # Debug information
+          echo "🔍 Debug Info:"
+          echo "- DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}"
+          echo "- IMAGE_NAME: ${{ env.IMAGE_NAME }}"
+          echo "- SOURCE_TAG: ${{ steps.set_tag.outputs.source_tag }}"
+          
+          # Construct full image reference
+          IMAGE_REF="${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/academianovit:${{ steps.set_tag.outputs.source_tag }}"
+          echo "📦 Full image reference: ${IMAGE_REF}"
+          
           # Pull the source image
           echo "🔍 Pulling source image from Docker Hub..."
-          docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}
+          if ! docker pull "${IMAGE_REF}"; then
+            echo "❌ Failed to pull image. Please check:"
+            echo "1. DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are set in GitHub"
+            echo "2. The image exists in your Docker Hub repository"
+            echo "3. The tag is correct"
+            exit 1
+          fi
 
           # Create new tags
           echo "🏷️ Creating new tags..."
