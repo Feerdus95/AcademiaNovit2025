@@ -96,22 +96,21 @@ jobs:
           echo "   - New Tag: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
           echo "   - Latest: ${{ env.IMAGE_NAME }}:latest"
 
-      - name: Verify SSH connection
+      - name: Set up SSH key
         run: |
-          echo "🔍 Verifying SSH connection to host..."
-          echo "Host: ${{ secrets.SSH_HOST }}"
-          echo "Port: ${{ secrets.SSH_PORT }}"
-          echo "User: ${{ secrets.SSH_USER }}"
+          echo "🔐 Setting up SSH key..."
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
           
-          # Test basic connectivity
-          if ! nc -zv "${{ secrets.SSH_HOST }}" "${{ secrets.SSH_PORT }}" 2>&1; then
-            echo "❌ Cannot reach host ${{ secrets.SSH_HOST }} on port ${{ secrets.SSH_PORT }}"
-            exit 1
-          fi
-          
-          # Test SSH connection
-          if ! ssh -v -o StrictHostKeyChecking=no -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" exit; then
+          echo "🔍 Testing SSH connection..."
+          if ! ssh -o BatchMode=yes -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" exit; then
             echo "❌ SSH connection failed to ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+            echo "Please verify:"
+            echo "1. The SSH private key is correctly set in GitHub secrets"
+            echo "2. The corresponding public key is in ~/.ssh/authorized_keys on the server"
+            echo "3. The SSH user has the necessary permissions"
             exit 1
           fi
           
