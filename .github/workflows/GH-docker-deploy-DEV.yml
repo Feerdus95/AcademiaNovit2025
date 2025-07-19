@@ -1,6 +1,9 @@
 name: Deploy to Production Environment
 
 on:
+  push:
+    branches:
+      - development
   workflow_dispatch:
     inputs:
       source_tag:
