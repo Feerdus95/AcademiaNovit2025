@@ -154,19 +154,24 @@ jobs:
             echo "🚀 Starting production deployment..."
             cd ~/academianovit
 
-            # Install Docker Compose if not present
+            # Install Docker Compose in user's home directory if not present
             if ! command -v docker-compose &> /dev/null; then
-              echo "📦 Installing Docker Compose..."
-              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              sudo chmod +x /usr/local/bin/docker-compose
-              echo "✅ Docker Compose installed"
+              echo "📦 Installing Docker Compose in user's home directory..."
+              mkdir -p ~/bin
+              curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o ~/bin/docker-compose
+              chmod +x ~/bin/docker-compose
+              export PATH="$HOME/bin:$PATH"
+              echo "✅ Docker Compose installed at ~/bin/docker-compose"
+              
+              # Verify Docker Compose installation
+              if ! ~/bin/docker-compose --version &> /dev/null; then
+                echo "❌ Failed to install Docker Compose"
+                exit 1
+              fi
             fi
-
-            # Verify Docker Compose installation
-            if ! command -v docker-compose &> /dev/null; then
-              echo "❌ Failed to install Docker Compose"
-              exit 1
-            fi
+            
+            # Ensure docker-compose is in PATH for all commands
+            export PATH="$HOME/bin:$PATH"
 
             # Set environment variables
             export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
