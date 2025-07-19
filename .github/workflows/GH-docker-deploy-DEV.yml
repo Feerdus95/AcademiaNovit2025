@@ -219,10 +219,14 @@ jobs:
 
             # Create a modified docker-compose file with updated ports
             echo "🔄 Creating modified docker-compose.yml with updated ports..."
-            sed 's/"5432:5432"/"5433:5432"/' docker-compose.yml > docker-compose.deploy.yml
+            # Change PostgreSQL port from 5432 to 5433
+            # Change web port from 80 to 8080
+            sed -e 's/"5432:5432"/"5433:5432"/' \
+                -e 's/"80:80"/"8080:80"/' \
+                docker-compose.yml > docker-compose.deploy.yml
             
-            # Update the connection string in the web service
-            sed -i 's/Host=db;Port=5432/Host=db;Port=5432/' docker-compose.deploy.yml
+            # Update the connection string in the web service if needed
+            # (keeping the internal container port as 5432)
             
             echo "✅ Created docker-compose.deploy.yml with port 5433 for PostgreSQL"
 
@@ -241,12 +245,12 @@ jobs:
             echo "📊 Service Status:"
             docker-compose -f docker-compose.deploy.yml ps
 
-            # Health check
+            # Health check on the new port
             echo "🔍 Running health checks..."
-            if curl -f http://localhost:80 > /dev/null 2>&1; then
-              echo "✅ Web service is responding on port 80"
+            if curl -f http://localhost:8080 > /dev/null 2>&1; then
+              echo "✅ Web service is responding on port 8080"
             else
-              echo "❌ Web service not responding on port 80"
+              echo "❌ Web service not responding on port 8080"
               echo "📋 Container logs:"
               docker-compose -f docker-compose.deploy.yml logs --tail=50
               exit 1
