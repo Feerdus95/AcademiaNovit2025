@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Docker image tag to deploy'
+        description: "Docker image tag to deploy"
         required: true
-        default: 'development'
+        default: "development"
 
 # Environment variables
 defaults:
@@ -53,53 +53,50 @@ jobs:
       - name: Setup SSH connection
         run: |
           set -ex  # Enable debug mode and exit on error
-          
+
           echo "🚀 Setting up SSH connection..."
           echo "🔍 Debug Info:"
           echo "- SSH_HOST: ${{ secrets.SSH_HOST }}"
           echo "- SSH_PORT: ${{ secrets.SSH_PORT }}"
           echo "- SSH_USER: ${{ secrets.SSH_USER }}"
-          
+
           # Create .ssh directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
+
           # Save private key
           echo "🔑 Saving SSH private key..."
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          
+
           # Verify private key was saved
           if [ ! -f ~/.ssh/id_rsa ]; then
             echo "❌ Error: Failed to save private key"
             exit 1
           fi
-          
+
           # Network diagnostics summary
           echo "🔍 Network diagnostics:"
           echo "🔹 Local hostname: $(hostname)"
           echo "🔹 Local IP addresses: $(hostname -I 2>/dev/null || ip addr 2>/dev/null || echo 'Not available')"
-          echo "🔹 Target host: ${{ secrets.SSH_HOST }}:22 (using standard SSH port)"
-          
-          # Verify SSH connectivity on port 22
-          echo "\n🔍 Verifying SSH access on port 22..."
-          if timeout 5 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/22" 2>/dev/null; then
-            echo "✅ Port 22 is open and accessible"
+          echo "🔹 Target host: ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+
+          # Verify SSH connectivity on the specified port
+          echo "\n🔍 Verifying SSH access on port ${{ secrets.SSH_PORT }}..."
+          if timeout 5 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/${{ secrets.SSH_PORT }}" 2>/dev/null; then
+            echo "✅ Port ${{ secrets.SSH_PORT }} is open and accessible"
           else
-            echo "❌ Port 22 is not accessible. Please check:"
+            echo "❌ Port ${{ secrets.SSH_PORT }} is not accessible. Please check:"
             echo "1. The SSH server is running on the target host"
-            echo "2. The firewall allows incoming connections on port 22"
+            echo "2. The firewall allows incoming connections on port ${{ secrets.SSH_PORT }}"
             echo "3. The server is reachable from GitHub Actions runners"
             exit 1
           fi
-          
-          # Update SSH port to use standard port 22
-          SSH_PORT=22
-          
+
           # Add server to known_hosts
-          echo "🔍 Adding SSH host key to known_hosts..."
-          ssh-keyscan -p 22 ${{ secrets.SSH_HOST }} 2>> ssh-keyscan-errors.log | tee -a ~/.ssh/known_hosts
-          
+          echo "🔍 Adding SSH host key to known_hosts on port ${{ secrets.SSH_PORT }}..."
+          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} 2>> ssh-keyscan-errors.log | tee -a ~/.ssh/known_hosts
+
           MAX_RETRIES=3
           RETRY_DELAY=5
             
@@ -126,11 +123,11 @@ jobs:
             echo "⚠️  Attempt $i/$MAX_RETRIES failed, retrying in ${RETRY_DELAY}s..."
             sleep $RETRY_DELAY
           done
-          
+
           # Test connection with retry logic
           MAX_RETRIES=3
           RETRY_DELAY=10
-          
+
           for ((i=1; i<=$MAX_RETRIES; i++)); do
             echo "\n🔌 Attempt $i/$MAX_RETRIES - Testing SSH connection to ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
             
@@ -165,12 +162,12 @@ jobs:
         run: |
           set -e
           echo "📦 Preparing files for deployment..."
-          
+
           # Save Docker image to tar file
           IMAGE_TAR="${{ env.IMAGE_NAME }}.tar"
           echo "💾 Saving Docker image to $IMAGE_TAR..."
           docker save -o $IMAGE_TAR ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
-          
+
           # Copy files to server
           echo "📤 Transferring files to server on port ${{ secrets.SSH_PORT }}..."
           scp $SSH_OPTS -P ${{ secrets.SSH_PORT }} \
@@ -181,7 +178,7 @@ jobs:
               echo "❌ Failed to copy files to server"
               exit 1
             }
-          
+
           echo "✅ Files successfully transferred to server"
 
       - name: Deploy with Docker Swarm
@@ -190,7 +187,7 @@ jobs:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
           echo "🚀 Starting deployment process on port ${{ secrets.SSH_PORT }}..."
-          
+
           ssh $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
             set -e
             
