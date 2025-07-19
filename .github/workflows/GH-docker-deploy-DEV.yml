@@ -1,14 +1,12 @@
-name: Deploy to DEV Environment
+name: Deploy to Production Environment
 
 on:
-  push:
-    branches: [development]
   workflow_dispatch:
     inputs:
       source_tag:
-        description: "Source image tag to re-tag and deploy"
+        description: "Source image tag to re-tag and deploy (e.g., latest, v1.0.0)"
         required: true
-        default: "development"
+        default: "latest"
 
 env:
   REGISTRY: docker.io
@@ -32,33 +30,32 @@ jobs:
       - name: Set deployment tag
         id: set_tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SOURCE_TAG="${{ github.event.inputs.source_tag }}"
-          else
-            SOURCE_TAG="${{ github.sha }}"
-          fi
+          SOURCE_TAG="${{ github.event.inputs.source_tag }}"
           DEPLOY_TAG="deploy-$(date +%Y%m%d-%H%M%S)"
           echo "source_tag=${SOURCE_TAG}" >> $GITHUB_OUTPUT
           echo "deploy_tag=${DEPLOY_TAG}" >> $GITHUB_OUTPUT
           echo "📝 Source tag: ${SOURCE_TAG}"
           echo "📝 Deploy tag: ${DEPLOY_TAG}"
 
-      - name: Re-tag images in Docker Hub registry
+      - name: Re-tag and push Docker image
         run: |
+          # Pull the source image
           echo "🔍 Pulling source image from Docker Hub..."
           docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}
 
-          echo "🏷️ Re-tagging image for deployment..."
+          # Create new tags
+          echo "🏷️ Creating new tags..."
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:latest
 
-          echo "📤 Pushing new tags to Docker Hub..."
+          # Push all tags to Docker Hub
+          echo "📤 Pushing images to Docker Hub..."
           docker push ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-          echo "✅ Re-tagging completed!"
+          echo "✅ Image re-tagging and pushing completed!"
           echo "   - Source: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}"
-          echo "   - Deploy: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+          echo "   - New Tag: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
           echo "   - Latest: ${{ env.IMAGE_NAME }}:latest"
 
       - name: Copy docker-compose to server
@@ -72,7 +69,7 @@ jobs:
           target: "~/academianovit/"
           overwrite: true
 
-      - name: Deploy to server via SSH
+      - name: Deploy to production server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -82,45 +79,52 @@ jobs:
           script: |
             set -e
 
-            echo "🚀 Starting deployment to DEV environment..."
+            echo "🚀 Starting production deployment..."
             cd ~/academianovit
 
-            # Set environment variables for docker-compose
+            # Set environment variables
             export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+            export IMAGE_TAG="${{ steps.set_tag.outputs.deploy_tag }}"
 
-            # Login to Docker Hub on server
+            # Login to Docker Hub
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
+            # Stop and clean up existing containers
             echo "🛑 Stopping existing containers..."
-            docker-compose down || true
+            docker-compose down --remove-orphans || true
 
-            echo "🧹 Cleaning up old containers and images..."
-            docker container prune -f
-            docker image prune -f
+            echo "🧹 Cleaning up unused resources..."
+            docker system prune -af --volumes
 
-            echo "📥 Pulling latest images from Docker Hub registry..."
-            docker-compose pull
+            # Pull the newly tagged image
+            echo "📥 Pulling new image from Docker Hub..."
+            docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
 
+            # Start services
             echo "🚀 Starting services with docker-compose..."
-            docker-compose up -d
+            docker-compose up -d --remove-orphans
 
+            # Verify deployment
             echo "⏳ Waiting for services to start..."
             sleep 30
 
             echo "📊 Service Status:"
             docker-compose ps
 
-            echo "🔍 Testing web service..."
+            # Health check
+            echo "🔍 Running health checks..."
             if curl -f http://localhost:80 > /dev/null 2>&1; then
               echo "✅ Web service is responding on port 80"
             else
               echo "❌ Web service not responding on port 80"
               echo "📋 Container logs:"
-              docker-compose logs --tail=20
+              docker-compose logs --tail=50
+              exit 1
             fi
 
             echo "🐳 Docker containers:"
-            docker ps
+            docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"
 
             echo "✅ Deployment completed successfully!"
-            echo "📝 Deployed image: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+            echo "📝 Deployed version: ${{ steps.set_tag.outputs.deploy_tag }}"
+            echo "🔗 Image: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
