@@ -213,44 +213,39 @@ jobs:
               docker-compose down --remove-orphans -v --timeout 30 || true
             fi
 
-            # Clean up unused resources
-            echo "🧹 Cleaning up unused Docker resources..."
-            docker system prune -af --volumes --filter "label!=keep" || true
+            # Start the database first
+            echo "🚀 Starting database service..."
+            docker-compose -f docker-compose.deploy.yml up -d db
 
-            # Create a modified docker-compose file with updated ports
-            echo "🔄 Creating modified docker-compose.yml with updated ports..."
-            # Change PostgreSQL port from 5432 to 5433
-            # Change web port from 80 to 8080
-            sed -e 's/"5432:5432"/"5433:5432"/' \
-                -e 's/"80:80"/"8080:80"/' \
-                docker-compose.yml > docker-compose.deploy.yml
-            
-            # Update the connection string in the web service if needed
-            # (keeping the internal container port as 5432)
-            
-            echo "✅ Created docker-compose.deploy.yml with port 5433 for PostgreSQL"
+            # Wait for database to be ready
+            echo "⏳ Waiting for database to be ready..."
+            sleep 10
 
-            # Pull the newly tagged image
-            echo "📥 Pulling new image from Docker Hub..."
-            docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
+            # Apply database migrations
+            echo "🔄 Applying database migrations..."
+            docker-compose -f docker-compose.deploy.yml run --rm web dotnet ef database update || {
+              echo "❌ Failed to apply database migrations"
+              docker-compose -f docker-compose.deploy.yml logs --tail=50
+              exit 1
+            }
 
-            # Start services using the modified compose file
-            echo "🚀 Starting services with docker-compose..."
-            docker-compose -f docker-compose.deploy.yml up -d --remove-orphans
+            # Start the web service
+            echo "🚀 Starting web service..."
+            docker-compose -f docker-compose.deploy.yml up -d web
 
             # Verify deployment
             echo "⏳ Waiting for services to start..."
-            sleep 30
+            sleep 20
 
             echo "📊 Service Status:"
             docker-compose -f docker-compose.deploy.yml ps
 
             # Health check on the new port
             echo "🔍 Running health checks..."
-            if curl -f http://localhost:8080 > /dev/null 2>&1; then
-              echo "✅ Web service is responding on port 8080"
+            if curl -f http://localhost:8080/keep-alive > /dev/null 2>&1; then
+              echo "✅ Web service health check passed on port 8080"
             else
-              echo "❌ Web service not responding on port 8080"
+              echo "❌ Web service health check failed on port 8080"
               echo "📋 Container logs:"
               docker-compose -f docker-compose.deploy.yml logs --tail=50
               exit 1
