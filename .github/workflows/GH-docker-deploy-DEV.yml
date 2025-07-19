@@ -33,15 +33,19 @@ jobs:
       - name: Set deployment tag
         id: set_tag
         run: |
-          # Set source tag from workflow_dispatch input or use 'latest' as default
+          # Default to 'development' tag unless specified
           if [ -n "${{ github.event.inputs.source_tag }}" ]; then
             SOURCE_TAG="${{ github.event.inputs.source_tag }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            # If triggered by push, use the git SHA
-            SOURCE_TAG="${{ github.sha }}"
+            echo "ℹ️  Using specified tag: $SOURCE_TAG"
           else
-            # Default to 'latest' if nothing else is specified
-            SOURCE_TAG="latest"
+            # Default to development tag
+            SOURCE_TAG="development"
+            echo "ℹ️  Using default development tag"
+          fi
+          
+          # For push events, we'll still use the SHA for the deploy tag
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "ℹ️  Push event detected, using SHA for deploy tag"
           fi
           
           # Generate a deploy tag with timestamp
