@@ -180,12 +180,26 @@ jobs:
             # Login to Docker Hub
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-            # Stop and clean up existing containers
-            echo "🛑 Stopping existing containers..."
-            docker-compose down --remove-orphans || true
+            # Stop any containers using the required ports
+            echo "🛑 Stopping any containers using required ports..."
+            for port in 80 443 5432; do
+              container_id=$(docker ps --format '{{.ID}}' --filter "publish=$port" || true)
+              if [ -n "$container_id" ]; then
+                echo "Stopping container $container_id using port $port..."
+                docker stop $container_id || true
+                docker rm -f $container_id || true
+              fi
+            done
 
-            echo "🧹 Cleaning up unused resources..."
-            docker system prune -af --volumes
+            # Clean up any remaining containers from previous deployments
+            echo "🧹 Cleaning up previous deployment..."
+            if [ -f docker-compose.yml ]; then
+              docker-compose down --remove-orphans -v --timeout 30 || true
+            fi
+
+            # Clean up unused resources
+            echo "🧹 Cleaning up unused Docker resources..."
+            docker system prune -af --volumes --filter "label!=keep" || true
 
             # Pull the newly tagged image
             echo "📥 Pulling new image from Docker Hub..."
