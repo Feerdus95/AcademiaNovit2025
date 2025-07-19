@@ -180,14 +180,30 @@ jobs:
             # Login to Docker Hub
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-            # Stop any containers using the required ports
-            echo "🛑 Stopping any containers using required ports..."
+            # Stop any processes using the required ports
+            echo "🛑 Checking for processes using required ports..."
             for port in 80 443 5432; do
+              # Check for Docker containers first
               container_id=$(docker ps --format '{{.ID}}' --filter "publish=$port" || true)
               if [ -n "$container_id" ]; then
-                echo "Stopping container $container_id using port $port..."
+                echo "Stopping Docker container $container_id using port $port..."
                 docker stop $container_id || true
                 docker rm -f $container_id || true
+              fi
+              
+              # Check for host processes
+              if command -v lsof > /dev/null; then
+                pid=$(sudo lsof -t -i ":$port" || true)
+                if [ -n "$pid" ]; then
+                  echo "Found host process $pid using port $port, stopping it..."
+                  sudo kill -9 $pid || true
+                fi
+              elif command -v ss > /dev/null; then
+                pid=$(sudo ss -tulpn | grep ":$port " | awk '{print $7}' | cut -d'"' -f2 | cut -d',' -f2 | uniq || true)
+                if [ -n "$pid" ] && [ "$pid" != "-" ]; then
+                  echo "Found host process $pid using port $port, stopping it..."
+                  sudo kill -9 $pid || true
+                fi
               fi
             done
 
