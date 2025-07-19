@@ -15,7 +15,7 @@ defaults:
     shell: bash
 
 env:
-  IMAGE_NAME: feerdus95/academianovit # Cambiar para coincidir con docker-swarm.yml
+  IMAGE_NAME: feerdus95/academianovit
   DEFAULT_TAG: development
   SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
 
@@ -74,8 +74,8 @@ jobs:
         run: |
           set -e
 
-          # Save Docker image to tar file
-          IMAGE_TAR="${{ env.IMAGE_NAME }}.tar"
+          # Save Docker image to tar file (sin el slash problemático)
+          IMAGE_TAR="academianovit.tar"
           echo "💾 Saving Docker image..."
           docker save -o $IMAGE_TAR ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
 
@@ -98,8 +98,8 @@ jobs:
             
             echo "🚀 Starting deployment..."
             
-            # Load the Docker image
-            docker load -i ~/feerdus95/academianovit.tar
+            # Load the Docker image (archivo corregido)
+            docker load -i ~/academianovit.tar
             
             # Set environment variables for Docker Swarm
             export IMAGE_TAG=$DEPLOY_TAG
