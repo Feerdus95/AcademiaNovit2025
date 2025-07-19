@@ -33,10 +33,25 @@ jobs:
       - name: Set deployment tag
         id: set_tag
         run: |
-          SOURCE_TAG="${{ github.event.inputs.source_tag }}"
+          # Set source tag from workflow_dispatch input or use 'latest' as default
+          if [ -n "${{ github.event.inputs.source_tag }}" ]; then
+            SOURCE_TAG="${{ github.event.inputs.source_tag }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # If triggered by push, use the git SHA
+            SOURCE_TAG="${{ github.sha }}"
+          else
+            # Default to 'latest' if nothing else is specified
+            SOURCE_TAG="latest"
+          fi
+          
+          # Generate a deploy tag with timestamp
           DEPLOY_TAG="deploy-$(date +%Y%m%d-%H%M%S)"
+          
+          # Set outputs
           echo "source_tag=${SOURCE_TAG}" >> $GITHUB_OUTPUT
           echo "deploy_tag=${DEPLOY_TAG}" >> $GITHUB_OUTPUT
+          
+          # Log information
           echo "📝 Source tag: ${SOURCE_TAG}"
           echo "📝 Deploy tag: ${DEPLOY_TAG}"
 
