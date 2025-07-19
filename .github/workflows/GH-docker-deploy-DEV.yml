@@ -75,22 +75,59 @@ jobs:
             exit 1
           fi
 
-          # Network diagnostics summary
+          # Enhanced network diagnostics
           echo "🔍 Network diagnostics:"
           echo "🔹 Local hostname: $(hostname)"
           echo "🔹 Local IP addresses: $(hostname -I 2>/dev/null || ip addr 2>/dev/null || echo 'Not available')"
           echo "🔹 Target host: ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
-
-          # Verify SSH connectivity on the specified port
-          echo "\n🔍 Verifying SSH access on port ${{ secrets.SSH_PORT }}..."
-          if timeout 5 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/${{ secrets.SSH_PORT }}" 2>/dev/null; then
-            echo "✅ Port ${{ secrets.SSH_PORT }} is open and accessible"
+          echo "🔹 Current directory: $(pwd)"
+          echo "🔹 Current user: $(whoami)"
+          
+          # Check basic connectivity
+          echo "\n🔍 Checking basic connectivity to ${{ secrets.SSH_HOST }}..."
+          if ping -c 3 -W 2 ${{ secrets.SSH_HOST }} 2>/dev/null; then
+            echo "✅ Host is reachable via ICMP"
           else
-            echo "❌ Port ${{ secrets.SSH_PORT }} is not accessible. Please check:"
-            echo "1. The SSH server is running on the target host"
-            echo "2. The firewall allows incoming connections on port ${{ secrets.SSH_PORT }}"
-            echo "3. The server is reachable from GitHub Actions runners"
-            exit 1
+            echo "⚠️  Host is not responding to ICMP pings (this might be expected if ICMP is blocked)"
+          fi
+          
+          # Check if port is open
+          echo "\n🔍 Checking if port ${{ secrets.SSH_PORT }} is open..."
+          if command -v nc &> /dev/null; then
+            if nc -zv -w 5 ${{ secrets.SSH_HOST }} ${{ secrets.SSH_PORT }} 2>&1; then
+              echo "✅ Port ${{ secrets.SSH_PORT }} is open"
+            else
+              echo "❌ Port ${{ secrets.SSH_PORT }} is closed or unreachable"
+            fi
+          else
+            echo "ℹ️  netcat not available, using fallback check..."
+            if timeout 5 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/${{ secrets.SSH_PORT }}" 2>/dev/null; then
+              echo "✅ Port ${{ secrets.SSH_PORT }} is open"
+            else
+              echo "❌ Port ${{ secrets.SSH_PORT }} is closed or unreachable"
+            fi
+          fi
+          
+          # Check if SSH port is responding
+          echo "\n🔍 Testing SSH service on port ${{ secrets.SSH_PORT }}..."
+          if command -v ssh-keyscan &> /dev/null; then
+            if ssh-keyscan -p ${{ secrets.SSH_PORT }} -T 5 ${{ secrets.SSH_HOST }} 2>&1 | grep -q "ssh-"; then
+              echo "✅ SSH service is responding on port ${{ secrets.SSH_PORT }}"
+            else
+              echo "❌ No SSH service detected on port ${{ secrets.SSH_PORT }}"
+              echo "⚠️  Please verify:"
+              echo "1. SSH server is running on ${{ secrets.SSH_HOST }}:${SSH_PORT}"
+              echo "2. Firewall allows connections on port ${{ secrets.SSH_PORT }}"
+              echo "3. SSH server is configured to listen on port ${{ secrets.SSH_PORT }}"
+              echo "4. The server is accessible from GitHub Actions runners"
+              echo "\n🔍 Testing standard SSH port (22) for comparison..."
+              if ssh-keyscan -p 22 -T 5 ${{ secrets.SSH_HOST }} 2>&1 | grep -q "ssh-"; then
+                echo "⚠️  SSH service detected on standard port 22. Should you be using port 22 instead?"
+              fi
+              exit 1
+            fi
+          else
+            echo "ℹ️  ssh-keyscan not available, skipping SSH service check"
           fi
 
           # Add server to known_hosts
