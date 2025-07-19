@@ -42,51 +42,101 @@ jobs:
       - name: Re-tag images in registry
         run: |
           TAG="${{ steps.set_tag.outputs.tag }}"
+          echo "Working with tag: $TAG"
+
+          # Pull image
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
+
+          # Create backup tag
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
+
+          # Push backup
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
 
       - name: Setup SSH
         run: |
+          # Create SSH directory
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Write SSH key
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts || true
 
-      - name: Copy docker files to server
+          # SSH config to avoid issues
+          cat > ~/.ssh/config << 'EOF'
+          Host deploy-server
+            HostName ${{ secrets.SSH_HOST }}
+            Port ${{ secrets.SSH_PORT }}
+            User ${{ secrets.SSH_USER }}
+            StrictHostKeyChecking no
+            UserKnownHostsFile=/dev/null
+            ConnectTimeout=60
+            ServerAliveInterval=30
+            ServerAliveCountMax=3
+            LogLevel ERROR
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Test connection and copy files
         run: |
-          scp -P ${{ secrets.SSH_PORT }} docker-compose.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/
-          scp -P ${{ secrets.SSH_PORT }} docker-swarm.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/
+          echo "Testing SSH connection..."
+          ssh deploy-server "echo 'Connection OK'"
+
+          echo "Copying docker-compose.yml..."
+          scp docker-compose.yml deploy-server:~/
+
+          echo "Copying docker-swarm.yml..."
+          scp docker-swarm.yml deploy-server:~/
 
       - name: Deploy to Production
+        env:
+          DEPLOY_TAG: ${{ steps.set_tag.outputs.tag }}
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
-          ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
-            DEPLOY_TAG="${{ steps.set_tag.outputs.tag }}"
+          ssh deploy-server << 'ENDSSH'
+            set -e
             
             echo "=== Starting deployment ==="
+            echo "Tag to deploy: $DEPLOY_TAG"
             
             # Login to Docker Hub
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+            echo "Logging into Docker Hub..."
+            echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USER" --password-stdin
             
-            # Pull image
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$DEPLOY_TAG
+            # Pull the image
+            echo "Pulling image: $REGISTRY/$IMAGE_NAME:$DEPLOY_TAG"
+            docker pull $REGISTRY/$IMAGE_NAME:$DEPLOY_TAG
             
-            # Deploy with docker-compose
-            docker-compose down || true
+            # Stop existing containers
+            echo "Stopping existing containers..."
+            docker-compose down 2>/dev/null || true
+            
+            # Start with docker-compose
+            echo "Starting with docker-compose..."
             docker-compose up -d
             
             # Show running containers
+            echo "=== Running containers ==="
             docker ps
             
-            # Deploy with Swarm (5 replicas)
-            IMAGE_TAG=$DEPLOY_TAG docker stack deploy -c docker-swarm.yml academia-novit
+            # Deploy with Swarm
+            echo "Deploying to Docker Swarm..."
+            export IMAGE_TAG=$DEPLOY_TAG
+            docker stack deploy -c docker-swarm.yml academia-novit
             
             # Wait for services
-            sleep 10
+            echo "Waiting for services to start..."
+            sleep 15
             
-            # Show services
+            # Show Swarm services
+            echo "=== Swarm services ==="
             docker service ls
+            docker stack ps academia-novit --no-trunc
             
-            echo "=== Deployment completed ==="
-          EOF
+            echo "=== Deployment completed successfully ==="
+          ENDSSH
