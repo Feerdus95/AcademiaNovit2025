@@ -75,11 +75,41 @@ jobs:
             exit 1
           fi
           
-          # Add server to known_hosts
-          echo "📝 Adding server to known_hosts..."
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} 2>/dev/null | tee -a ~/.ssh/known_hosts
+          # Add server to known_hosts with retry logic
+          MAX_RETRIES=3
+          RETRY_DELAY=5
           
-          # Retry logic
+          echo "📝 Attempting to add server to known_hosts..."
+          for ((i=1; i<=$MAX_RETRIES; i++)); do
+            echo "🔍 Attempt $i/$MAX_RETRIES - Running ssh-keyscan..."
+            if ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} 2> ssh-keyscan-error.log | tee -a ~/.ssh/known_hosts; then
+              echo "✅ Successfully added host to known_hosts"
+              break
+            else
+              if [ $i -eq $MAX_RETRIES ]; then
+                echo "❌ Failed to add host to known_hosts after $MAX_RETRIES attempts"
+                echo "🔍 ssh-keyscan error output:"
+                cat ssh-keyscan-error.log || true
+                echo "🔍 Current known_hosts content:"
+                cat ~/.ssh/known_hosts || true
+                echo "🔍 Testing network connectivity..."
+                ping -c 3 ${{ secrets.SSH_HOST }} || true
+                exit 1
+              fi
+              echo "⚠️  Failed to add host (attempt $i/$MAX_RETRIES), retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            fi
+          done
+          
+          # Verify known_hosts was updated
+          if ! grep -q "${{ secrets.SSH_HOST }}" ~/.ssh/known_hosts 2>/dev/null; then
+            echo "❌ Failed to add host to known_hosts after $MAX_RETRIES attempts"
+            echo "🔍 Known_hosts content:"
+            cat ~/.ssh/known_hosts 2>/dev/null || echo "No known_hosts file found"
+            exit 1
+          fi
+          
+          # Test connection with retry logic
           MAX_RETRIES=3
           RETRY_DELAY=10
           
