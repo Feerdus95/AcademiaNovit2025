@@ -3,15 +3,12 @@ version: '3.8'
 services:
   # .NET Application Service
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: final
+    image: ${DOCKERHUB_USERNAME}/academianovit:latest
     container_name: academia-novit-web
     ports:
-      - "8080:80"
+      - "80:80"  # Changed to 80:80 for production
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production  # Changed to Production
       - ASPNETCORE_URLS=http://+:80
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=academianovitdb;Username=postgres;Password=postgres123
     depends_on:

@@ -1,133 +1,126 @@
-name: Deploy to DEV with Docker Swarm
+name: Deploy to DEV Environment
 
 on:
   push:
     branches: [development]
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: "Docker image tag to deploy"
+      source_tag:
+        description: "Source image tag to re-tag and deploy"
         required: true
         default: "development"
 
-defaults:
-  run:
-    shell: bash
-
 env:
-  IMAGE_NAME: feerdus95/academianovit
-  DEFAULT_TAG: development
-  SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/academianovit
 
 jobs:
-  deploy:
+  retag-and-deploy:
+    name: Re-tag and Deploy to DEV
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set image tag
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set deployment tag
         id: set_tag
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SOURCE_TAG="${{ github.event.inputs.source_tag }}"
           else
-            echo "tag=${{ env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+            SOURCE_TAG="${{ github.sha }}"
           fi
+          DEPLOY_TAG="deploy-$(date +%Y%m%d-%H%M%S)"
+          echo "source_tag=${SOURCE_TAG}" >> $GITHUB_OUTPUT
+          echo "deploy_tag=${DEPLOY_TAG}" >> $GITHUB_OUTPUT
+          echo "📝 Source tag: ${SOURCE_TAG}"
+          echo "📝 Deploy tag: ${DEPLOY_TAG}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Re-tag images in Docker Hub registry
+        run: |
+          echo "🔍 Pulling source image from Docker Hub..."
+          docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
+          echo "🏷️ Re-tagging image for deployment..."
+          docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
+          docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:latest
+
+          echo "📤 Pushing new tags to Docker Hub..."
+          docker push ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+          echo "✅ Re-tagging completed!"
+          echo "   - Source: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}"
+          echo "   - Deploy: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+          echo "   - Latest: ${{ env.IMAGE_NAME }}:latest"
+
+      - name: Copy docker-compose to server
+        uses: appleboy/scp-action@v0.1.7
         with:
-          context: .
-          load: true
-          tags: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml"
+          target: "~/academianovit/"
+          overwrite: true
 
-      - name: Setup SSH connection
-        run: |
-          set -ex
-
-          echo "🚀 Setting up SSH connection..."
-
-          # Create .ssh directory
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          # Save private key
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-          # Test connectivity to the custom port
-          echo "🔍 Testing connectivity to ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
-
-          # Add server to known_hosts using the correct port
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-
-          # Test SSH connection
-          ssh $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo '✅ SSH connection successful!'"
-
-      - name: Copy files to server
-        run: |
-          set -e
-
-          # Save Docker image to tar file (sin el slash problemático)
-          IMAGE_TAR="academianovit.tar"
-          echo "💾 Saving Docker image..."
-          docker save -o $IMAGE_TAR ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
-
-          # Copy files to server
-          echo "📤 Transferring files..."
-          scp $SSH_OPTS -P ${{ secrets.SSH_PORT }} \
-            $IMAGE_TAR \
-            docker-compose.yml \
-            docker-swarm.yml \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/
-
-      - name: Deploy with Docker Swarm
-        env:
-          DEPLOY_TAG: ${{ steps.set_tag.outputs.tag }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: |
-          ssh $SSH_OPTS -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << ENDSSH
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
             set -e
-            
-            echo "🚀 Starting deployment..."
-            
-            # Load the Docker image (archivo corregido)
-            docker load -i ~/academianovit.tar
-            
-            # Set environment variables for Docker Swarm
-            export IMAGE_TAG=$DEPLOY_TAG
-            export DB_USER=$DB_USER
-            export DB_PASSWORD=$DB_PASSWORD
-            
-            # Stop existing services
-            docker-compose down 2>/dev/null || true
-            docker stack rm academia-novit 2>/dev/null || true
-            sleep 10
-            
-            # Initialize Docker Swarm if needed
-            if ! docker node ls &>/dev/null; then
-              echo "🐝 Initializing Docker Swarm..."
-              docker swarm init --advertise-addr $(hostname -I | awk '{print $1}')
+
+            echo "🚀 Starting deployment to DEV environment..."
+            cd ~/academianovit
+
+            # Set environment variables for docker-compose
+            export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+
+            # Login to Docker Hub on server
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            echo "🛑 Stopping existing containers..."
+            docker-compose down || true
+
+            echo "🧹 Cleaning up old containers and images..."
+            docker container prune -f
+            docker image prune -f
+
+            echo "📥 Pulling latest images from Docker Hub registry..."
+            docker-compose pull
+
+            echo "🚀 Starting services with docker-compose..."
+            docker-compose up -d
+
+            echo "⏳ Waiting for services to start..."
+            sleep 30
+
+            echo "📊 Service Status:"
+            docker-compose ps
+
+            echo "🔍 Testing web service..."
+            if curl -f http://localhost:80 > /dev/null 2>&1; then
+              echo "✅ Web service is responding on port 80"
+            else
+              echo "❌ Web service not responding on port 80"
+              echo "📋 Container logs:"
+              docker-compose logs --tail=20
             fi
-            
-            # Deploy with Docker Swarm
-            echo "🚀 Deploying with Docker Swarm..."
-            docker stack deploy -c docker-swarm.yml academia-novit
-            
-            # Wait and show status
-            echo "⏳ Waiting for services..."
-            sleep 20
-            
-            docker service ls
-            docker service ps academia-novit_web --no-trunc
-            
-            echo "✅ Deployment completed!"
-          ENDSSH
+
+            echo "🐳 Docker containers:"
+            docker ps
+
+            echo "✅ Deployment completed successfully!"
+            echo "📝 Deployed image: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
