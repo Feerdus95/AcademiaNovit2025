@@ -76,23 +76,38 @@ jobs:
           fi
           
           # Enhanced network diagnostics
-          echo "🔍 Running network diagnostics..."
-          echo "🔹 Hostname: $(hostname)"
-          echo "🔹 IP Addresses: $(hostname -I 2>/dev/null || ip addr 2>/dev/null || echo 'Not available')"
-          echo "🔹 Route to host:"
-          ip route get ${{ secrets.SSH_HOST }} 2>/dev/null || echo "  Route not found"
+          echo "🔍 Running comprehensive network diagnostics..."
+          echo "🔹 Local hostname: $(hostname)"
+          echo "🔹 Local IP addresses: $(hostname -I 2>/dev/null || ip addr 2>/dev/null || echo 'Not available')"
+          echo "🔹 Target host: ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
           
-          # Test basic connectivity
-          echo "🔍 Testing basic connectivity to ${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}..."
-          if command -v nc &> /dev/null; then
-            echo "🔹 Testing with netcat (nc):"
-            nc -zv -w 5 ${{ secrets.SSH_HOST }} ${{ secrets.SSH_PORT }} 2>&1 || echo "  nc test failed"
+          # Test basic ICMP connectivity
+          echo "\n🔍 Testing basic ICMP connectivity to ${{ secrets.SSH_HOST }}..."
+          if ping -c 3 -W 2 ${{ secrets.SSH_HOST }} 2>&1; then
+            echo "✅ ICMP ping successful"
+          else
+            echo "⚠️  ICMP ping failed - host might be blocking ICMP or is unreachable"
           fi
           
-          if command -v telnet &> /dev/null; then
-            echo "🔹 Testing with telnet (may time out):"
-            (echo quit; sleep 1) | telnet ${{ secrets.SSH_HOST }} ${{ secrets.SSH_PORT }} 2>&1 | head -5 || echo "  telnet test failed"
-          fi
+          # Test common SSH ports if the configured one fails
+          echo "\n🔍 Testing common SSH ports (this may take a moment)..."
+          for port in ${{ secrets.SSH_PORT }} 22 2222 2022 222; do
+            echo -n "🔹 Testing port $port: "
+            if timeout 3 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/$port" 2>/dev/null; then
+              echo "✅ OPEN - SSH might be running here!"
+              echo "   Try using this port instead of the current one."
+            else
+              echo "❌ CLOSED or filtered"
+            fi
+          done
+          
+          # Check if any port is open
+          echo "\n🔍 Quick port scan (top 20 common ports)..."
+          for port in 21 22 23 25 53 80 110 111 135 139 143 443 445 993 995 1723 3306 3389 5900 8080; do
+            if timeout 1 bash -c "echo > /dev/tcp/${{ secrets.SSH_HOST }}/$port" 2>/dev/null; then
+              echo "🔸 Port $port: OPEN - Service might be running"
+            fi
+          done
           
           # Try different ssh-keyscan formats
           echo "🔍 Trying different ssh-keyscan formats..."
