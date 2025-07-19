@@ -41,138 +41,52 @@ jobs:
 
       - name: Re-tag images in registry
         run: |
-          # Use the tag from previous step
           TAG="${{ steps.set_tag.outputs.tag }}"
-
-          # Pull current image
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG
-
-          # Re-tag with timestamp for backup
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
-
-          # Push backup image
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:backup-$TIMESTAMP
-
-      - name: Debug SSH parameters
-        run: |
-          echo "=== SSH Configuration Debug ==="
-          echo "SSH_HOST is set: ${{ secrets.SSH_HOST != '' }}"
-          echo "SSH_PORT is set: ${{ secrets.SSH_PORT != '' }}"
-          echo "SSH_USER is set: ${{ secrets.SSH_USER != '' }}"
-          echo "SSH_PRIVATE_KEY is set: ${{ secrets.SSH_PRIVATE_KEY != '' }}"
-
-          # Test if port is numeric
-          if [[ "${{ secrets.SSH_PORT }}" =~ ^[0-9]+$ ]]; then
-            echo "SSH_PORT is numeric: YES"
-          else
-            echo "SSH_PORT is numeric: NO - this might be the problem!"
-          fi
-
-          # Test network connectivity
-          echo "=== Testing network connectivity ==="
-          timeout 5s nc -zv ${{ secrets.SSH_HOST }} ${{ secrets.SSH_PORT }} || echo "Connection test failed"
 
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-
-          # Write SSH key
-          cat > ~/.ssh/id_rsa << 'EOK'
-          ${{ secrets.SSH_PRIVATE_KEY }}
-          EOK
-
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-
-          # Debug: Check if key exists and has content
-          echo "SSH key file size: $(wc -c < ~/.ssh/id_rsa) bytes"
-
-          # Check if key is valid
-          if [ -s ~/.ssh/id_rsa ]; then
-            echo "SSH key file created successfully"
-            # Try to validate key format
-            if head -n 1 ~/.ssh/id_rsa | grep -q "BEGIN"; then
-              echo "SSH key appears to be in correct format"
-            else
-              echo "WARNING: SSH key might be in wrong format"
-            fi
-          else
-            echo "ERROR: SSH key file is empty!"
-            exit 1
-          fi
-
-          # Create SSH config to skip host key checking
-          cat > ~/.ssh/config << 'EOC'
-          Host *
-            StrictHostKeyChecking no
-            UserKnownHostsFile=/dev/null
-            ConnectTimeout=10
-            ServerAliveInterval=60
-            ServerAliveCountMax=3
-          EOC
-
-          chmod 600 ~/.ssh/config
-
-          # Try to add host key anyway (but don't fail if it doesn't work)
-          echo "Attempting to scan host key..."
-          timeout 10s ssh-keyscan -p ${{ secrets.SSH_PORT }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || {
-            echo "Note: ssh-keyscan failed, continuing with StrictHostKeyChecking=no"
-          }
-
-      - name: Test SSH connection
-        run: |
-          echo "Testing SSH connection..."
-          ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
+          ssh-keyscan -p ${{ secrets.SSH_PORT }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts || true
 
       - name: Copy docker files to server
         run: |
-          echo "Copying docker-compose.yml..."
-          scp -P ${{ secrets.SSH_PORT }} docker-compose.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/docker-compose.yml
-
-          echo "Copying docker-swarm.yml..."
-          scp -P ${{ secrets.SSH_PORT }} docker-swarm.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/docker-swarm.yml
+          scp -P ${{ secrets.SSH_PORT }} docker-compose.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/
+          scp -P ${{ secrets.SSH_PORT }} docker-swarm.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/${{ secrets.SSH_USER }}/
 
       - name: Deploy to Production
         run: |
           ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
-            # Use the tag
             DEPLOY_TAG="${{ steps.set_tag.outputs.tag }}"
             
             echo "=== Starting deployment ==="
-            echo "Deploying image tag: $DEPLOY_TAG"
             
             # Login to Docker Hub
-            echo "Logging into Docker Hub..."
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
             
-            # Pull the new image
-            echo "Pulling image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$DEPLOY_TAG"
+            # Pull image
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$DEPLOY_TAG
             
-            # Stop existing containers
-            echo "Stopping existing containers..."
+            # Deploy with docker-compose
             docker-compose down || true
-            
-            # Run with docker-compose
-            echo "Starting containers with docker-compose..."
             docker-compose up -d
             
             # Show running containers
-            echo "=== Docker containers status ==="
             docker ps
             
-            # Deploy with Docker Swarm (5 replicas)
-            echo "Deploying to Docker Swarm..."
+            # Deploy with Swarm (5 replicas)
             IMAGE_TAG=$DEPLOY_TAG docker stack deploy -c docker-swarm.yml academia-novit
             
-            # Wait for services to stabilize
-            echo "Waiting for services to start..."
-            sleep 15
+            # Wait for services
+            sleep 10
             
-            # Show swarm services
-            echo "=== Docker Swarm services ==="
+            # Show services
             docker service ls
-            docker service ps academia-novit_web
             
             echo "=== Deployment completed ==="
           EOF
