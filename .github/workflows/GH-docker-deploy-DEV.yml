@@ -1,15 +1,14 @@
-name: Deploy to Production Environment
+name: Deploy to DEV with Docker Hub Registry
 
 on:
   push:
-    branches:
-      - development
+    branches: [development]
   workflow_dispatch:
     inputs:
       source_tag:
-        description: "Source image tag to re-tag and deploy (e.g., latest, v1.0.0)"
+        description: "Source image tag to re-tag and deploy"
         required: true
-        default: "latest"
+        default: "development"
 
 env:
   REGISTRY: docker.io
@@ -33,100 +32,35 @@ jobs:
       - name: Set deployment tag
         id: set_tag
         run: |
-          # Default to 'development' tag unless specified
-          if [ -n "${{ github.event.inputs.source_tag }}" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SOURCE_TAG="${{ github.event.inputs.source_tag }}"
-            echo "ℹ️  Using specified tag: $SOURCE_TAG"
           else
-            # Default to development tag
+            # Usar el tag 'development' para push automático
             SOURCE_TAG="development"
-            echo "ℹ️  Using default development tag"
           fi
-          
-          # For push events, we'll still use the SHA for the deploy tag
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "ℹ️  Push event detected, using SHA for deploy tag"
-          fi
-          
-          # Generate a deploy tag with timestamp
           DEPLOY_TAG="deploy-$(date +%Y%m%d-%H%M%S)"
-          
-          # Set outputs
           echo "source_tag=${SOURCE_TAG}" >> $GITHUB_OUTPUT
           echo "deploy_tag=${DEPLOY_TAG}" >> $GITHUB_OUTPUT
-          
-          # Log information
           echo "📝 Source tag: ${SOURCE_TAG}"
           echo "📝 Deploy tag: ${DEPLOY_TAG}"
 
-      - name: Re-tag and push Docker image
+      - name: Re-tag images in Docker Hub registry
         run: |
-          # Debug information
-          echo "🔍 Debug Info:"
-          echo "- DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}"
-          echo "- IMAGE_NAME: ${{ env.IMAGE_NAME }}"
-          echo "- SOURCE_TAG: ${{ steps.set_tag.outputs.source_tag }}"
-          
-          # Construct full image reference
-          IMAGE_REF="${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/academianovit:${{ steps.set_tag.outputs.source_tag }}"
-          echo "📦 Full image reference: ${IMAGE_REF}"
-          
-          # Pull the source image
           echo "🔍 Pulling source image from Docker Hub..."
-          if ! docker pull "${IMAGE_REF}"; then
-            echo "❌ Failed to pull image. Please check:"
-            echo "1. DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are set in GitHub"
-            echo "2. The image exists in your Docker Hub repository"
-            echo "3. The tag is correct"
-            exit 1
-          fi
+          docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}
 
-          # Create new tags
-          echo "🏷️ Creating new tags..."
+          echo "🏷️ Re-tagging image for deployment..."
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:latest
 
-          # Push all tags to Docker Hub
-          echo "📤 Pushing images to Docker Hub..."
+          echo "📤 Pushing new tags to Docker Hub..."
           docker push ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-          echo "✅ Image re-tagging and pushing completed!"
+          echo "✅ Re-tagging completed!"
           echo "   - Source: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}"
-          echo "   - New Tag: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+          echo "   - Deploy: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
           echo "   - Latest: ${{ env.IMAGE_NAME }}:latest"
-
-      - name: Set up SSH key
-        run: |
-          echo "🔐 Setting up SSH key..."
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-          
-          echo "🔍 Testing SSH connection..."
-          if ! ssh -o BatchMode=yes -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" exit; then
-            echo "❌ SSH connection failed to ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
-            echo "Please verify:"
-            echo "1. The SSH private key is correctly set in GitHub secrets"
-            echo "2. The corresponding public key is in ~/.ssh/authorized_keys on the server"
-            echo "3. The SSH user has the necessary permissions"
-            exit 1
-          fi
-          
-          echo "✅ SSH connection verified"
-
-      - name: Create remote directory
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          port: ${{ secrets.SSH_PORT }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "📂 Creating remote directory if it doesn't exist..."
-            mkdir -p ~/academianovit
-            echo "✅ Directory ready"
 
       - name: Copy docker-compose to server
         uses: appleboy/scp-action@v0.1.7
@@ -138,10 +72,8 @@ jobs:
           source: "docker-compose.yml"
           target: "~/academianovit/"
           overwrite: true
-          strip_components: 0
-          debug: true
 
-      - name: Deploy to production server via SSH
+      - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -151,109 +83,62 @@ jobs:
           script: |
             set -e
 
-            echo "🚀 Starting production deployment..."
+            echo "🚀 Starting deployment to DEV environment..."
             cd ~/academianovit
 
-            # Install Docker Compose in user's home directory if not present
-            if ! command -v docker-compose &> /dev/null; then
-              echo "📦 Installing Docker Compose in user's home directory..."
-              mkdir -p ~/bin
-              curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o ~/bin/docker-compose
-              chmod +x ~/bin/docker-compose
-              export PATH="$HOME/bin:$PATH"
-              echo "✅ Docker Compose installed at ~/bin/docker-compose"
-              
-              # Verify Docker Compose installation
-              if ! ~/bin/docker-compose --version &> /dev/null; then
-                echo "❌ Failed to install Docker Compose"
-                exit 1
-              fi
-            fi
-            
-            # Ensure docker-compose is in PATH for all commands
-            export PATH="$HOME/bin:$PATH"
-
-            # Set environment variables
+            # Set environment variables for docker-compose
             export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
-            export IMAGE_TAG="${{ steps.set_tag.outputs.deploy_tag }}"
 
-            # Login to Docker Hub
+            # Login to Docker Hub on server
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-            # Stop any processes using the required ports
-            echo "🛑 Checking for processes using required ports..."
-            for port in 80 443 5432; do
-              # Check for Docker containers first
-              container_id=$(docker ps --format '{{.ID}}' --filter "publish=$port" || true)
-              if [ -n "$container_id" ]; then
-                echo "Stopping Docker container $container_id using port $port..."
-                docker stop $container_id || true
-                docker rm -f $container_id || true
-              fi
-              
-              # Check for host processes
-              if command -v lsof > /dev/null; then
-                pid=$(sudo lsof -t -i ":$port" || true)
-                if [ -n "$pid" ]; then
-                  echo "Found host process $pid using port $port, stopping it..."
-                  sudo kill -9 $pid || true
-                fi
-              elif command -v ss > /dev/null; then
-                pid=$(sudo ss -tulpn | grep ":$port " | awk '{print $7}' | cut -d'"' -f2 | cut -d',' -f2 | uniq || true)
-                if [ -n "$pid" ] && [ "$pid" != "-" ]; then
-                  echo "Found host process $pid using port $port, stopping it..."
-                  sudo kill -9 $pid || true
-                fi
+            echo "🛑 Stopping existing containers..."
+            docker-compose down || true
+
+            echo "🧹 Cleaning up old containers and images..."
+            docker container prune -f || true
+            docker image prune -f || true
+
+            echo "📥 Pulling latest images from Docker Hub registry..."
+            docker-compose pull
+
+            echo "🚀 Starting services with docker-compose..."
+            docker-compose up -d
+
+            echo "⏳ Waiting for services to start..."
+            sleep 45
+
+            echo "📊 Service Status:"
+            docker-compose ps
+
+            echo "🐳 All Docker containers:"
+            docker ps
+
+            echo "🔍 Testing web service..."
+            for i in {1..5}; do
+              if curl -f http://localhost:80 > /dev/null 2>&1; then
+                echo "✅ Web service is responding on port 80"
+                break
+              else
+                echo "⏳ Attempt $i: Service not ready yet, waiting..."
+                sleep 10
               fi
             done
 
-            # Clean up any remaining containers from previous deployments
-            echo "🧹 Cleaning up previous deployment..."
-            if [ -f docker-compose.yml ]; then
-              docker-compose down --remove-orphans -v --timeout 30 || true
-            fi
-
-            # Start the database first
-            echo "🚀 Starting database service..."
-            docker-compose -f docker-compose.deploy.yml up -d db
-
-            # Wait for database to be ready
-            echo "⏳ Waiting for database to be ready..."
-            sleep 10
-
-            # Apply database migrations
-            echo "🔄 Applying database migrations..."
-            docker-compose -f docker-compose.deploy.yml run --rm web dotnet ef database update || {
-              echo "❌ Failed to apply database migrations"
-              docker-compose -f docker-compose.deploy.yml logs --tail=50
-              exit 1
-            }
-
-            # Start the web service
-            echo "🚀 Starting web service..."
-            docker-compose -f docker-compose.deploy.yml up -d web
-
-            # Verify deployment
-            echo "⏳ Waiting for services to start..."
-            sleep 20
-
-            echo "📊 Service Status:"
-            docker-compose -f docker-compose.deploy.yml ps
-
-            # Health check on the new port
-            echo "🔍 Running health checks..."
-            if curl -f http://localhost:8080/keep-alive > /dev/null 2>&1; then
-              echo "✅ Web service health check passed on port 8080"
+            # Final health check
+            if curl -f http://localhost:80 > /dev/null 2>&1; then
+              echo "✅ Final check: Web service is healthy"
             else
-              echo "❌ Web service health check failed on port 8080"
-              echo "📋 Container logs:"
-              docker-compose -f docker-compose.deploy.yml logs --tail=50
-              exit 1
+              echo "❌ Final check: Web service not responding"
+              echo "📋 Web container logs:"
+              docker-compose logs web --tail=30
+              echo "📋 DB container logs:"
+              docker-compose logs db --tail=15
             fi
 
-            echo "🐳 Docker containers:"
-            docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"
+            echo "🌐 Service URLs:"
+            echo "   - Web App: http://$(hostname -I | awk '{print $1}'):80"
+            echo "   - Database: $(hostname -I | awk '{print $1}'):5432"
 
-            echo "✅ Deployment completed successfully!"
-            echo "📝 Deployed version: ${{ steps.set_tag.outputs.deploy_tag }}"
-            echo "🔗 Image: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+            echo "✅ Deployment completed!"
+            echo "📝 Deployed image: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
