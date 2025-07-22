@@ -82,7 +82,6 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-
             echo "🚀 Starting deployment to DEV environment..."
             cd ~/academianovit
 
@@ -116,8 +115,8 @@ jobs:
 
             echo "🔍 Testing web service..."
             for i in {1..5}; do
-              if curl -f http://localhost:80 > /dev/null 2>&1; then
-                echo "✅ Web service is responding on port 80"
+              if curl -f http://localhost:2025 > /dev/null 2>&1; then
+                echo "✅ Web service is responding on port 2025"
                 break
               else
                 echo "⏳ Attempt $i: Service not ready yet, waiting..."
@@ -126,7 +125,7 @@ jobs:
             done
 
             # Final health check
-            if curl -f http://localhost:80 > /dev/null 2>&1; then
+            if curl -f http://localhost:2025 > /dev/null 2>&1; then
               echo "✅ Final check: Web service is healthy"
             else
               echo "❌ Final check: Web service not responding"
@@ -137,8 +136,7 @@ jobs:
             fi
 
             echo "🌐 Service URLs:"
-            echo "   - Web App: http://$(hostname -I | awk '{print $1}'):80"
-            echo "   - Database: $(hostname -I | awk '{print $1}'):5432"
-
+            echo "   - Web App: http://$(hostname -I | awk '{print $1}'):2025"
+            echo "   - Database: $(hostname -I | awk '{print $1}'):5432 (internal only)"
             echo "✅ Deployment completed!"
-            echo "📝 Deployed image: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+            echo "📝 Deployed image: ${{ secrets.DOCKERHUB_USERNAME }}/academianovit:${{ env.IMAGE_NAME }}"

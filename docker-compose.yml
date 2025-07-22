@@ -1,54 +1,41 @@
-version: '3.8'
-
 services:
   # .NET Application Service
   web:
     image: ${DOCKERHUB_USERNAME}/academianovit:latest
     container_name: academia-novit-web
     ports:
-      - "80:80"
+      - "2025:80"  # Match pinggy port
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:80
-      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=academianovitdb;Username=postgres;Password=postgres123
+      - ConnectionStrings__DefaultConnection=Host=db;Database=academianovit;Username=postgres;Password=postgres123
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
     networks:
       - app-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
   # PostgreSQL Database Service
   db:
-    image: postgres:15-alpine
+    image: postgres:15
     container_name: academia-novit-db
     environment:
-      POSTGRES_DB: academianovitdb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
+      - POSTGRES_DB=academianovit
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres123
     volumes:
-      - postgres_data:/var/lib/postgresql/data/
-      #Removed port mapping
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - app-network
-    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-# Networks
+volumes:
+  postgres_data:
+
 networks:
   app-network:
     driver: bridge
-
-# Volumes
-volumes:
-  postgres_data:
