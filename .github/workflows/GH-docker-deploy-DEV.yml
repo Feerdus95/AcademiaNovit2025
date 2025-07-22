@@ -115,8 +115,8 @@ jobs:
 
             echo "🔍 Testing web service..."
             for i in {1..5}; do
-              if curl -f http://localhost:2025 > /dev/null 2>&1; then
-                echo "✅ Web service is responding on port 2025"
+              if curl -f http://localhost:3000 > /dev/null 2>&1; then
+                echo "✅ Web service is responding on port 3000"
                 break
               else
                 echo "⏳ Attempt $i: Service not ready yet, waiting..."
@@ -125,7 +125,7 @@ jobs:
             done
 
             # Final health check
-            if curl -f http://localhost:2025 > /dev/null 2>&1; then
+            if curl -f http://localhost:3000 > /dev/null 2>&1; then
               echo "✅ Final check: Web service is healthy"
             else
               echo "❌ Final check: Web service not responding"

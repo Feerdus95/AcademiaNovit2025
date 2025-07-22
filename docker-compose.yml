@@ -4,7 +4,7 @@ services:
     image: ${DOCKERHUB_USERNAME}/academianovit:latest
     container_name: academia-novit-web
     ports:
-      - "2025:80"  # Match pinggy port
+      - "3000:80"  # Swapped to 3000 to avoid port conflicts
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:80
