@@ -1,0 +1,41 @@
+services:
+  # .NET Application Service
+  web:
+    image: ${DOCKERHUB_USERNAME}/academianovit:latest
+    container_name: academia-novit-web
+    ports:
+      - "3000:80"  # Swapped to 3000 to avoid port conflicts
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=db;Database=academianovit;Username=postgres;Password=postgres123
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # PostgreSQL Database Service
+  db:
+    image: postgres:15
+    container_name: academia-novit-db
+    environment:
+      - POSTGRES_DB=academianovit
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge

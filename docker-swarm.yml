@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  # .NET Application Service
+  web:
+    image: feerdus95/academianovit:${IMAGE_TAG:-development}
+    deploy:
+      replicas: 5
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1G
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=academianovitdb;Username=${DB_USER:-postgres};Password=${DB_PASSWORD:-postgres123}
+    ports:
+      - "80:80"
+    networks:
+      - app-network
+    depends_on:
+      - db
+
+  # PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    environment:
+      POSTGRES_DB: academianovitdb
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+networks:
+  app-network:
+    driver: overlay
+    attachable: true
+
+volumes:
+  postgres_data:
+    driver: local

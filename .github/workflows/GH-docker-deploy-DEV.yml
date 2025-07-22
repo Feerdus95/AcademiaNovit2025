@@ -1,0 +1,142 @@
+name: Deploy to DEV with Docker Hub Registry
+
+on:
+  push:
+    branches: [development]
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "Source image tag to re-tag and deploy"
+        required: true
+        default: "development"
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/academianovit
+
+jobs:
+  retag-and-deploy:
+    name: Re-tag and Deploy to DEV
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set deployment tag
+        id: set_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SOURCE_TAG="${{ github.event.inputs.source_tag }}"
+          else
+            # Usar el tag 'development' para push automático
+            SOURCE_TAG="development"
+          fi
+          DEPLOY_TAG="deploy-$(date +%Y%m%d-%H%M%S)"
+          echo "source_tag=${SOURCE_TAG}" >> $GITHUB_OUTPUT
+          echo "deploy_tag=${DEPLOY_TAG}" >> $GITHUB_OUTPUT
+          echo "📝 Source tag: ${SOURCE_TAG}"
+          echo "📝 Deploy tag: ${DEPLOY_TAG}"
+
+      - name: Re-tag images in Docker Hub registry
+        run: |
+          echo "🔍 Pulling source image from Docker Hub..."
+          docker pull ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}
+
+          echo "🏷️ Re-tagging image for deployment..."
+          docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
+          docker tag ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }} ${{ env.IMAGE_NAME }}:latest
+
+          echo "📤 Pushing new tags to Docker Hub..."
+          docker push ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+          echo "✅ Re-tagging completed!"
+          echo "   - Source: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.source_tag }}"
+          echo "   - Deploy: ${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.deploy_tag }}"
+          echo "   - Latest: ${{ env.IMAGE_NAME }}:latest"
+
+      - name: Copy docker-compose to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml"
+          target: "~/academianovit/"
+          overwrite: true
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            echo "🚀 Starting deployment to DEV environment..."
+            cd ~/academianovit
+
+            # Set environment variables for docker-compose
+            export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+
+            # Login to Docker Hub on server
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            echo "🛑 Stopping existing containers..."
+            docker compose down || true
+
+            echo "🧹 Cleaning up old containers and images..."
+            docker container prune -f || true
+            docker image prune -f || true
+
+            echo "📥 Pulling latest images from Docker Hub registry..."
+            docker compose pull
+
+            echo "🚀 Starting services with docker compose..."
+            docker compose up -d
+
+            echo "⏳ Waiting for services to start..."
+            sleep 45
+
+            echo "📊 Service Status:"
+            docker compose ps
+
+            echo "🐳 All Docker containers:"
+            docker ps
+
+            echo "🔍 Testing web service..."
+            for i in {1..5}; do
+              if curl -f http://localhost:3000 > /dev/null 2>&1; then
+                echo "✅ Web service is responding on port 3000"
+                break
+              else
+                echo "⏳ Attempt $i: Service not ready yet, waiting..."
+                sleep 10
+              fi
+            done
+
+            # Final health check
+            if curl -f http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Final check: Web service is healthy"
+            else
+              echo "❌ Final check: Web service not responding"
+              echo "📋 Web container logs:"
+              docker compose logs web --tail=30
+              echo "📋 DB container logs:"
+              docker compose logs db --tail=15
+            fi
+
+            echo "🌐 Service URLs:"
+            echo "   - Web App: http://$(hostname -I | awk '{print $1}'):3000/scalar"
+            echo "   - Database: $(hostname -I | awk '{print $1}'):5432 (internal only)"
+            echo "✅ Deployment completed!"
+            echo "📝 Deployed image: ${{ secrets.DOCKERHUB_USERNAME }}/academianovit:${{ env.IMAGE_NAME }}"
