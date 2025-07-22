@@ -136,7 +136,7 @@ jobs:
             fi
 
             echo "🌐 Service URLs:"
-            echo "   - Web App: http://$(hostname -I | awk '{print $1}'):3000"
+            echo "   - Web App: http://$(hostname -I | awk '{print $1}'):3000/scalar"
             echo "   - Database: $(hostname -I | awk '{print $1}'):5432 (internal only)"
             echo "✅ Deployment completed!"
             echo "📝 Deployed image: ${{ secrets.DOCKERHUB_USERNAME }}/academianovit:${{ env.IMAGE_NAME }}"
