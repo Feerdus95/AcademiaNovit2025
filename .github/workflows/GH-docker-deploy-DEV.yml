@@ -93,23 +93,23 @@ jobs:
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
             echo "🛑 Stopping existing containers..."
-            docker-compose down || true
+            docker compose down || true
 
             echo "🧹 Cleaning up old containers and images..."
             docker container prune -f || true
             docker image prune -f || true
 
             echo "📥 Pulling latest images from Docker Hub registry..."
-            docker-compose pull
+            docker compose pull
 
-            echo "🚀 Starting services with docker-compose..."
-            docker-compose up -d
+            echo "🚀 Starting services with docker compose..."
+            docker compose up -d
 
             echo "⏳ Waiting for services to start..."
             sleep 45
 
             echo "📊 Service Status:"
-            docker-compose ps
+            docker compose ps
 
             echo "🐳 All Docker containers:"
             docker ps
@@ -131,9 +131,9 @@ jobs:
             else
               echo "❌ Final check: Web service not responding"
               echo "📋 Web container logs:"
-              docker-compose logs web --tail=30
+              docker compose logs web --tail=30
               echo "📋 DB container logs:"
-              docker-compose logs db --tail=15
+              docker compose logs db --tail=15
             fi
 
             echo "🌐 Service URLs:"
