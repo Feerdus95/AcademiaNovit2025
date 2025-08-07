@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'AcademiaNovit'
+    orgId: 1
+    folder: 'AcademiaNovit'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
